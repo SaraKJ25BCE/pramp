@@ -1,0 +1,143 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  googleId  String   @unique
+  email     String   @unique
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  passport  Passport?
+}
+
+model Passport {
+  id          String   @id
+  userId      String   @unique
+  username    String?  @unique
+  displayName String
+  publicKey   String   @db.Text
+  privateKey  String   @db.Text
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id])
+  stamps      Stamp[]
+  monitors    Monitor[]
+  takedowns   Takedown[]
+}
+
+model Stamp {
+  id              String   @id
+  passportId      String
+  originalHash    String
+  stampedHash     String?
+  pHash           String?
+  dHash           String?
+  title           String
+  description     String?
+  license         String
+  category        String   @default("image")
+  fileType        String
+  fileName        String?
+  fileSize        Int?
+  originalFileUrl String
+  stampedFileUrl  String?
+  thumbnailUrl    String?
+  signature       String   @db.Text
+  certificateUrl  String?
+  metadataJson    String?  @db.Text
+  proofChain      String?  @db.Text
+  aiOptOut        Boolean  @default(true)
+  monitorEnabled  Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  passport        Passport @relation(fields: [passportId], references: [id])
+  monitors        Monitor[]
+  alerts          MonitorAlert[]
+  takedowns       Takedown[]
+  versions        StampVersion[]
+
+  @@index([pHash])
+  @@index([originalHash])
+  @@index([passportId])
+  @@index([aiOptOut])
+}
+
+model StampVersion {
+  id          String   @id @default(cuid())
+  stampId     String
+  version     Int
+  label       String
+  fileHash    String
+  fileUrl     String
+  thumbnailUrl String?
+  fileSize    Int?
+  note        String?
+  createdAt   DateTime @default(now())
+  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+
+  @@index([stampId])
+  @@unique([stampId, version])
+}
+
+model Monitor {
+  id          String   @id @default(cuid())
+  passportId  String
+  stampId     String
+  status      String   @default("active")
+  lastScanAt  DateTime?
+  matchCount  Int      @default(0)
+  createdAt   DateTime @default(now())
+  passport    Passport @relation(fields: [passportId], references: [id])
+  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  alerts      MonitorAlert[]
+
+  @@unique([passportId, stampId])
+  @@index([status])
+}
+
+model MonitorAlert {
+  id          String   @id @default(cuid())
+  monitorId   String
+  stampId     String
+  sourceUrl   String
+  sourceName  String?
+  matchType   String
+  confidence  Float
+  screenshotUrl String?
+  status      String   @default("new")
+  createdAt   DateTime @default(now())
+  monitor     Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  takedown    Takedown?
+
+  @@index([monitorId])
+  @@index([stampId])
+  @@index([status])
+}
+
+model Takedown {
+  id            String   @id @default(cuid())
+  passportId    String
+  stampId       String
+  alertId       String?  @unique
+  platform      String
+  infringingUrl String
+  status        String   @default("draft")
+  dmcaLetter    String?  @db.Text
+  filedAt       DateTime?
+  resolvedAt    DateTime?
+  resolution    String?
+  notes         String?  @db.Text
+  createdAt     DateTime @default(now())
+  passport      Passport @relation(fields: [passportId], references: [id])
+  stamp         Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  alert         MonitorAlert? @relation(fields: [alertId], references: [id])
+
+  @@index([passportId])
+  @@index([stampId])
+  @@index([status])
+}
