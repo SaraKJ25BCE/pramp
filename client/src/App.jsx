@@ -12,7 +12,7 @@ import SharePage from '@/pages/SharePage';
 import MonitorPage from '@/pages/MonitorPage';
 import TakedownPage from '@/pages/TakedownPage';
 import RegistryPage from '@/pages/RegistryPage';
-import { Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react'; 
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
