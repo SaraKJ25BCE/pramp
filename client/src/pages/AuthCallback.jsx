@@ -12,9 +12,9 @@ export default function AuthCallback() {
     const token = searchParams.get('token');
     if (token) {
       login(token);
-      // Check if user needs to set up username
+      const needsSetup = searchParams.get('needsSetup') === '1';
       setTimeout(() => {
-        navigate('/setup');
+        navigate(needsSetup ? '/setup' : '/dashboard');
       }, 500);
     } else {
       navigate('/login?error=no_token');

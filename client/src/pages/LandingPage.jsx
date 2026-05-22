@@ -2,13 +2,13 @@ import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
   Shield, Lock, Search, CheckCircle2, ArrowRight, Fingerprint,
-  Image, FileText, Zap, Globe, Code, Eye
+  Image, FileText, Zap, Globe, Code, Eye, Scale
 } from 'lucide-react';
+import { MARKETING, BSA_FRAME } from '@/content/legalCopy';
 
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-white">
-      {/* Nav */}
       <nav className="border-b border-gray-100 bg-white/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-6 flex justify-between h-16 items-center">
           <div className="flex items-center gap-2">
@@ -20,34 +20,31 @@ export default function LandingPage() {
               <Link to="/verify">Verify a File</Link>
             </Button>
             <Button asChild>
-              <Link to="/login">Get Started Free</Link>
+              <Link to="/login">Get Started</Link>
             </Button>
           </div>
         </div>
       </nav>
 
-      {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-white to-purple-50" />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-100/40 via-transparent to-transparent" />
         <div className="relative max-w-6xl mx-auto px-6 pt-20 pb-24 text-center">
           <div className="inline-flex items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-full px-4 py-1.5 text-sm text-indigo-700 font-medium mb-6">
-            <Lock className="h-3.5 w-3.5" />
-            Cryptographic proof of creative ownership
+            <Scale className="h-3.5 w-3.5" />
+            {MARKETING.heroBadge}
           </div>
           <h1 className="text-5xl sm:text-6xl font-bold text-gray-900 leading-tight max-w-4xl mx-auto">
-            If you didn't stamp it,<br />
-            <span className="text-indigo-600">you can't prove you made it.</span>
+            If you didn&apos;t stamp it,<br />
+            <span className="text-indigo-600">you can&apos;t prove when you claimed you made it.</span>
           </h1>
           <p className="text-xl text-gray-600 mt-6 max-w-2xl mx-auto leading-relaxed">
-            ProofStamp gives creators instant, cryptographic proof of ownership.
-            Invisible watermarks that survive screenshots, format changes, and compression.
-            Your work. Your proof. Forever.
+            {MARKETING.heroSub}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4 mt-10">
             <Button size="lg" className="text-base px-8 h-12" asChild>
               <Link to="/login">
-                Start Protecting Free
+                Start Protecting
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Link>
             </Button>
@@ -58,16 +55,20 @@ export default function LandingPage() {
               </Link>
             </Button>
           </div>
-          <p className="text-sm text-gray-500 mt-4">No credit card required · 10 free stamps/month</p>
+          <p className="text-sm text-gray-500 mt-4">
+            {MARKETING.limitsLine} ·{' '}
+            <Link to="/legal-guide" className="text-indigo-600 hover:underline">What this proves</Link>
+          </p>
         </div>
       </section>
 
-      {/* How it works */}
       <section className="py-20 bg-white border-t border-gray-100">
         <div className="max-w-6xl mx-auto px-6">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-bold text-gray-900">Three steps to bulletproof ownership</h2>
-            <p className="text-gray-600 mt-3 text-lg">From upload to legally-defensible proof in seconds</p>
+            <h2 className="text-3xl font-bold text-gray-900">Three steps to defensible proof</h2>
+            <p className="text-gray-600 mt-3 text-lg">
+              From upload to downloadable evidence package in seconds
+            </p>
           </div>
           <div className="grid md:grid-cols-3 gap-8">
             {[
@@ -75,19 +76,19 @@ export default function LandingPage() {
                 step: '01',
                 icon: Lock,
                 title: 'Upload & Stamp',
-                desc: 'Upload any creative file. We embed an invisible DWT-DCT watermark, generate perceptual hashes, and sign it with your unique RSA key.',
+                desc: 'SHA-256 fingerprint, your RSA signature, and an independent RFC 3161 timestamp. Images also get perceptual hashes and an invisible watermark.',
               },
               {
                 step: '02',
-                icon: Fingerprint,
-                title: 'Share With Proof',
-                desc: 'Get a shareable ProofStamp link with ownership overlay. Share confidently — the watermark survives screenshots and re-uploads.',
+                icon: FileText,
+                title: 'Download Legal Proof',
+                desc: `${BSA_FRAME.shortLabel}, creator declaration, proof bundle JSON, and ${MARKETING.counselPacketName} for DMCA notices or your advocate.`,
               },
               {
                 step: '03',
                 icon: Shield,
-                title: 'Verify Anytime',
-                desc: 'Anyone can verify ownership by uploading the file or entering the Stamp ID. Works even after format conversion or compression.',
+                title: 'Verify & Act',
+                desc: `Anyone can verify a file or Stamp ID. ${MARKETING.monitoringLanding}. File takedowns with your evidence attached.`,
               },
             ].map((item) => (
               <div key={item.step} className="relative p-6 rounded-2xl border border-gray-100 bg-gray-50/50 hover:border-indigo-100 hover:bg-indigo-50/30 transition-colors">
@@ -103,19 +104,19 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Protection layers */}
       <section className="py-20 bg-gradient-to-b from-gray-50 to-white">
         <div className="max-w-6xl mx-auto px-6">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-bold text-gray-900">Multi-layer protection</h2>
-            <p className="text-gray-600 mt-3 text-lg">Not one, not two — four independent verification methods</p>
+            <h2 className="text-3xl font-bold text-gray-900">Legal proof layers</h2>
+            <p className="text-gray-600 mt-3 text-lg">Every claim maps to a downloadable artifact</p>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-6">
             {[
-              { icon: Fingerprint, title: 'SHA-256 Hash', desc: 'Byte-level fingerprint detects any modification' },
-              { icon: Eye, title: 'Perceptual Hash', desc: 'Content-aware matching survives format changes' },
-              { icon: Image, title: 'DWT-DCT Watermark', desc: 'Invisible watermark embedded in frequency domain' },
-              { icon: FileText, title: 'RSA Signature', desc: 'Cryptographic proof tied to your identity' },
+              { icon: Fingerprint, title: 'SHA-256', desc: 'Byte-level fingerprint' },
+              { icon: FileText, title: 'RSA Signature', desc: 'Creator identity binding' },
+              { icon: Scale, title: 'RFC 3161 TSA', desc: 'Independent time witness' },
+              { icon: FileText, title: 'BSA s.63', desc: 'System certificate for electronic records (India)' },
+              { icon: Eye, title: 'Watermark', desc: 'Invisible mark on images' },
             ].map((item) => (
               <div key={item.title} className="text-center p-6 rounded-xl border border-gray-100">
                 <div className="h-10 w-10 rounded-lg bg-indigo-50 flex items-center justify-center mx-auto mb-3">
@@ -129,7 +130,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Comparison */}
       <section className="py-20 bg-white border-t border-gray-100">
         <div className="max-w-4xl mx-auto px-6">
           <div className="text-center mb-12">
@@ -137,10 +137,10 @@ export default function LandingPage() {
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
             {[
-              { vs: 'vs NFTs/Blockchain', win: 'Instant, free, no wallet needed' },
-              { vs: 'vs Visible Watermarks', win: 'Invisible — doesn\'t ruin your work' },
-              { vs: 'vs Copyright Office', win: 'Instant (not weeks) and $0 (not $55/file)' },
-              { vs: 'vs Emailing Yourself', win: 'Cryptographic proof + perceptual matching' },
+              { vs: 'vs Emailing Yourself', win: 'Independent timestamp + signed evidence pack, not just a sent email' },
+              { vs: 'vs Visible Watermarks', win: 'Invisible protection that does not ruin your work' },
+              { vs: 'vs Copyright Office Only', win: 'Instant evidence today — register with the Copyright Office when you need maximum strength' },
+              { vs: 'vs NFT Hype', win: 'Real evidence artifacts, not wallet theater' },
             ].map((item) => (
               <div key={item.vs} className="flex items-start gap-3 p-4 rounded-lg bg-green-50 border border-green-100">
                 <CheckCircle2 className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
@@ -154,19 +154,18 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Power Features */}
       <section className="py-20 bg-gray-50">
         <div className="max-w-6xl mx-auto px-6">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-gray-900">Not just proof. Full protection.</h2>
-            <p className="text-gray-600 mt-3 text-lg">Detect theft, file takedowns, and block AI training — all from one dashboard</p>
+            <h2 className="text-3xl font-bold text-gray-900">Proof, monitoring, and takedowns</h2>
+            <p className="text-gray-600 mt-3 text-lg">One workflow when your work is stolen online</p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {[
-              { icon: Globe, title: 'Theft Monitoring', desc: 'We scan for copies of your work and alert you when unauthorized use is detected' },
-              { icon: FileText, title: 'One-Click Takedown', desc: 'Generate a DMCA notice pre-filled with your proof. File directly to Instagram, YouTube, Twitter' },
-              { icon: Shield, title: 'AI Opt-Out Registry', desc: 'Public, machine-readable registry that AI companies can check before training on your work' },
-              { icon: Code, title: 'Creation Timeline', desc: 'Upload sketches, drafts, and revisions. Prove your creative process — impossible to fake' },
+              { icon: Globe, title: 'Theft Monitoring', desc: MARKETING.monitoringLanding },
+              { icon: FileText, title: 'DMCA + Guided Filing', desc: 'Generate a notice pre-filled with your proof — you file on each platform' },
+              { icon: Shield, title: 'AI Opt-Out Registry', desc: 'Public registry signaling no AI training without permission' },
+              { icon: Code, title: 'Creation Timeline', desc: 'Version drafts to document your creative process' },
             ].map((item) => (
               <div key={item.title} className="p-5 rounded-2xl bg-white border border-gray-100 shadow-sm">
                 <item.icon className="h-7 w-7 text-indigo-600 mb-3" />
@@ -178,26 +177,22 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* CTA */}
       <section className="py-20 bg-gradient-to-br from-indigo-600 to-indigo-800">
         <div className="max-w-3xl mx-auto px-6 text-center">
           <Zap className="h-10 w-10 text-indigo-200 mx-auto mb-4" />
-          <h2 className="text-3xl font-bold text-white mb-4">
-            Start protecting your work today
-          </h2>
+          <h2 className="text-3xl font-bold text-white mb-4">Start protecting your work today</h2>
           <p className="text-indigo-200 text-lg mb-8">
-            10 free stamps every month. No credit card. Set up in 30 seconds with Google.
+            Full legal proof on every stamp. Set up in 30 seconds with Google.
           </p>
           <Button size="lg" variant="secondary" className="text-base px-8 h-12" asChild>
             <Link to="/login">
-              Get Started Free
+              Get Started
               <ArrowRight className="h-4 w-4 ml-2" />
             </Link>
           </Button>
         </div>
       </section>
 
-      {/* Footer */}
       <footer className="bg-gray-900 text-gray-400 py-12">
         <div className="max-w-6xl mx-auto px-6">
           <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
@@ -205,12 +200,16 @@ export default function LandingPage() {
               <Shield className="h-5 w-5 text-indigo-400" />
               <span className="font-semibold text-white">ProofStamp</span>
             </div>
-            <div className="flex gap-6 text-sm">
+            <div className="flex flex-wrap gap-6 text-sm justify-center">
               <Link to="/verify" className="hover:text-white transition-colors">Verify</Link>
+              <Link to="/legal-guide" className="hover:text-white transition-colors">Legal Guide</Link>
+              <Link to="/register-copyright" className="hover:text-white transition-colors">Copyright Registration</Link>
               <Link to="/registry" className="hover:text-white transition-colors">AI Registry</Link>
+              <Link to="/terms" className="hover:text-white transition-colors">Terms</Link>
+              <Link to="/privacy" className="hover:text-white transition-colors">Privacy</Link>
               <Link to="/login" className="hover:text-white transition-colors">Sign In</Link>
             </div>
-            <p className="text-sm">&copy; {new Date().getFullYear()} ProofStamp. Cryptographic proof of ownership.</p>
+            <p className="text-sm">&copy; {new Date().getFullYear()} ProofStamp</p>
           </div>
         </div>
       </footer>

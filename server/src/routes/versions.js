@@ -4,8 +4,14 @@ const authMiddleware = require('../middleware/auth');
 const upload = require('../middleware/upload');
 const prisma = require('../config/prisma');
 const { uploadBuffer, getThumbnailUrl } = require('../config/cloudinary');
+const { decryptPrivateKey, signData } = require('../utils/crypto');
 
 const router = express.Router();
+
+function computeChainHash(version, fileHash, prevHash, timestamp) {
+  const payload = `${version}|${fileHash}|${prevHash || ''}|${timestamp}`;
+  return crypto.createHash('sha256').update(payload).digest('hex');
+}
 
 // Get all versions for a stamp
 router.get('/:stampId', async (req, res) => {
@@ -44,17 +50,22 @@ router.post('/:stampId', authMiddleware, upload.single('file'), async (req, res)
     if (!stamp) return res.status(404).json({ error: 'Stamp not found' });
     if (stamp.passportId !== passport.id) return res.status(403).json({ error: 'Not your stamp' });
 
-    // Determine next version number
     const lastVersion = await prisma.stampVersion.findFirst({
       where: { stampId: stamp.id },
       orderBy: { version: 'desc' },
     });
     const nextVersion = (lastVersion?.version || 0) + 1;
 
-    // Compute hash
     const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
 
-    // Upload to cloudinary
+    const prevHash = lastVersion?.chainHash || lastVersion?.fileHash || null;
+    const timestamp = new Date().toISOString();
+    const chainHash = computeChainHash(nextVersion, fileHash, prevHash, timestamp);
+
+    const privateKey = decryptPrivateKey(passport.privateKey);
+    const signPayload = `${stamp.id}|v${nextVersion}|${fileHash}|${chainHash}|${timestamp}`;
+    const signature = signData(signPayload, privateKey);
+
     const uploaded = await uploadBuffer(file.buffer, {
       folder: `proofstamp/versions/${stamp.id}`,
       public_id: `v${nextVersion}`,
@@ -69,6 +80,9 @@ router.post('/:stampId', authMiddleware, upload.single('file'), async (req, res)
         version: nextVersion,
         label,
         fileHash,
+        prevHash,
+        chainHash,
+        signature,
         fileUrl: uploaded.secure_url,
         thumbnailUrl,
         fileSize: file.buffer.length,
@@ -83,7 +97,7 @@ router.post('/:stampId', authMiddleware, upload.single('file'), async (req, res)
   }
 });
 
-// Get proof of creation process (public - court-ready)
+// Get proof of creation process (public — admissibility-oriented evidence)
 router.get('/:stampId/proof', async (req, res) => {
   try {
     const stamp = await prisma.stamp.findUnique({
@@ -101,6 +115,9 @@ router.get('/:stampId/proof', async (req, res) => {
       label: v.label,
       timestamp: v.createdAt.toISOString(),
       fileHash: v.fileHash,
+      prevHash: v.prevHash || null,
+      chainHash: v.chainHash || null,
+      signature: v.signature || null,
       fileSize: v.fileSize,
       note: v.note,
       timeSincePrevious: i > 0
@@ -108,22 +125,45 @@ router.get('/:stampId/proof', async (req, res) => {
         : null,
     }));
 
+    let chainValid = true;
+    for (let i = 0; i < timeline.length; i++) {
+      const v = timeline[i];
+      if (v.chainHash) {
+        const expectedPrev = i > 0 ? (timeline[i - 1].chainHash || timeline[i - 1].fileHash) : null;
+        if (v.prevHash !== expectedPrev) {
+          chainValid = false;
+          break;
+        }
+        const recomputed = computeChainHash(v.version, v.fileHash, v.prevHash, v.timestamp);
+        if (recomputed !== v.chainHash) {
+          chainValid = false;
+          break;
+        }
+      }
+    }
+
     const proof = {
       type: 'ProofOfCreationProcess',
-      version: '1.0',
+      version: '2.0',
       stampId: stamp.id,
       title: stamp.title,
       creator: {
         name: stamp.passport.displayName,
         handle: `@${stamp.passport.username}`,
         passportId: stamp.passport.id,
+        publicKey: stamp.passport.publicKey,
       },
       finalWork: {
         hash: stamp.originalHash,
         registeredAt: stamp.createdAt.toISOString(),
-        signature: stamp.signature.substring(0, 64) + '...',
+        signature: stamp.signature,
       },
       creationTimeline: timeline,
+      chainIntegrity: {
+        valid: chainValid,
+        algorithm: 'SHA-256(version|fileHash|prevHash|timestamp)',
+        signatureAlgorithm: 'RSA-SHA256 over stampId|version|fileHash|chainHash|timestamp',
+      },
       totalVersions: timeline.length,
       timeSpan: timeline.length >= 2
         ? {
@@ -134,9 +174,16 @@ router.get('/:stampId/proof', async (req, res) => {
             ) + ' minutes',
           }
         : null,
-      evidence: 'This creation timeline shows progressive development of the work with cryptographic timestamps at each stage. Each version is hashed and stored independently, making it computationally infeasible to fabricate this history retroactively.',
-      verification: `${process.env.CLIENT_URL}/verify?id=${stamp.id}`,
+      verification: {
+        url: `${process.env.CLIENT_URL}/verify?id=${stamp.id}`,
+        instructions: 'To verify this proof: (1) Recompute each chainHash using SHA-256(version|fileHash|prevHash|timestamp). (2) Verify each RSA signature using the creator\'s public key above. (3) Confirm the chain is unbroken (each prevHash matches the prior chainHash).',
+      },
+      evidence: 'This creation timeline shows progressive development of the work with a cryptographically chained hash sequence and per-version RSA signatures. Each version references the previous via SHA-256 chain hashes, making retroactive insertion or reordering computationally infeasible.',
     };
+
+    const proofJson = JSON.stringify(proof);
+    const documentHash = crypto.createHash('sha256').update(proofJson).digest('hex');
+    proof.documentHash = documentHash;
 
     res.json(proof);
   } catch (error) {

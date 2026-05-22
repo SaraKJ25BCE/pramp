@@ -7,8 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   Radar, Shield, AlertTriangle, Eye, EyeOff, Loader2,
-  ScanSearch, Bell, CheckCircle2, ExternalLink, FileWarning
+  ScanSearch, Bell, CheckCircle2, ExternalLink, FileWarning, Info
 } from 'lucide-react';
+import { MARKETING } from '@/content/legalCopy';
 
 export default function MonitorPage() {
   const [monitors, setMonitors] = useState([]);
@@ -18,6 +19,7 @@ export default function MonitorPage() {
   const [scanning, setScanning] = useState(null);
   const [stamps, setStamps] = useState([]);
   const [tab, setTab] = useState('overview');
+  const [capabilities, setCapabilities] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -25,11 +27,13 @@ export default function MonitorPage() {
 
   async function loadData() {
     try {
-      const [monRes, alertRes, stampRes] = await Promise.all([
+      const [monRes, alertRes, stampRes, capRes] = await Promise.all([
         api.get('/monitor'),
         api.get('/monitor/alerts'),
         api.get('/passport/me'),
+        api.get('/monitor/capabilities').catch(() => ({ data: null })),
       ]);
+      setCapabilities(capRes.data);
       setMonitors(monRes.data.monitors);
       setStats(monRes.data.stats);
       setAlerts(alertRes.data.alerts);
@@ -96,6 +100,19 @@ export default function MonitorPage() {
   return (
     <Layout>
       <div className="max-w-5xl mx-auto space-y-6">
+        {capabilities && !capabilities.webScan && (
+          <div className="flex gap-3 p-4 rounded-lg border border-amber-200 bg-amber-50 text-sm text-amber-900">
+            <Info className="h-5 w-5 shrink-0" />
+            <div>
+              <p className="font-medium">Web-wide scan off</p>
+              <p className="mt-1 text-amber-800">
+                Add <code className="text-xs">TINEYE_API_KEY</code> or Google Vision on the server to detect copies on Instagram, Pinterest, etc.
+                You still get in-app alerts and <strong>Similar work on ProofStamp</strong> scans.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-3">
@@ -245,8 +262,13 @@ export default function MonitorPage() {
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium text-sm">{alert.sourceName || 'Unknown source'}</p>
+                          <Badge variant="outline" className="text-xs">
+                            {alert.sourceEngine === 'internal'
+                              ? 'Similar work on ProofStamp'
+                              : 'Found on the web'}
+                          </Badge>
                           <Badge variant={alert.status === 'new' ? 'destructive' : 'secondary'} className="text-xs">
                             {alert.status}
                           </Badge>

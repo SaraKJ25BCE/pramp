@@ -3,8 +3,16 @@ const axios = require('axios');
 const FormData = require('form-data');
 const authMiddleware = require('../middleware/auth');
 const prisma = require('../config/prisma');
+const { notifyWebhook } = require('../services/webhooks');
+const { performExternalScan } = require('../services/reverseSearch');
+const { sendMonitorAlertEmail } = require('../services/notifications');
+const { getMonitoringCapabilities } = require('../services/monitoringCapabilities');
 
 const router = express.Router();
+
+router.get('/capabilities', authMiddleware, (req, res) => {
+  res.json(getMonitoringCapabilities());
+});
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
@@ -80,7 +88,10 @@ router.post('/disable/:stampId', authMiddleware, async (req, res) => {
 
 router.post('/scan/:stampId', authMiddleware, async (req, res) => {
   try {
-    const passport = await prisma.passport.findUnique({ where: { userId: req.user.userId } });
+    const passport = await prisma.passport.findUnique({
+      where: { userId: req.user.userId },
+      include: { user: { select: { email: true } } },
+    });
     if (!passport) return res.status(404).json({ error: 'Passport not found' });
 
     const stamp = await prisma.stamp.findUnique({ where: { id: req.params.stampId } });
@@ -92,26 +103,58 @@ router.post('/scan/:stampId', authMiddleware, async (req, res) => {
     });
     if (!monitor) return res.status(400).json({ error: 'Monitoring not enabled for this stamp' });
 
-    // Perform scan: compare pHash against all OTHER stamps in the system
+    // Perform scan: compare pHash + CNN embedding against all OTHER stamps
     const allOtherStamps = await prisma.stamp.findMany({
       where: {
         pHash: { not: null },
         passportId: { not: passport.id },
       },
-      select: { id: true, pHash: true, dHash: true, title: true, thumbnailUrl: true, originalFileUrl: true,
+      select: { id: true, pHash: true, dHash: true, embedding: true, title: true,
+                thumbnailUrl: true, originalFileUrl: true,
                 passport: { select: { username: true, displayName: true } } },
     });
 
     const matches = [];
     for (const other of allOtherStamps) {
       const dist = hammingDistance(stamp.pHash, other.pHash);
-      if (dist < 25) {
+      let cnnSimilarity = null;
+
+      // CNN embedding comparison (more robust than pHash)
+      if (stamp.embedding?.length > 0 && other.embedding?.length > 0) {
+        cnnSimilarity = cosineSimilarity(stamp.embedding, other.embedding);
+      }
+
+      const isPhashMatch = dist < 25;
+      const isCnnMatch = cnnSimilarity !== null && cnnSimilarity > 0.70;
+
+      if (isPhashMatch || isCnnMatch) {
+        let confidence;
+        let matchType = 'perceptual_hash';
+
+        if (cnnSimilarity !== null && cnnSimilarity > 0.85) {
+          confidence = Math.min(0.98, cnnSimilarity);
+          matchType = 'cnn_embedding';
+        } else if (dist <= 5) {
+          confidence = 0.95;
+        } else if (cnnSimilarity !== null && cnnSimilarity > 0.70) {
+          confidence = cnnSimilarity * 0.9;
+          matchType = 'cnn_embedding';
+        } else if (dist <= 10) {
+          confidence = 0.85;
+        } else if (dist <= 18) {
+          confidence = 0.7;
+        } else {
+          confidence = 0.5;
+        }
+
         matches.push({
           stampId: other.id,
           title: other.title,
           owner: other.passport.username,
           distance: dist,
-          confidence: dist <= 5 ? 0.95 : dist <= 10 ? 0.85 : dist <= 18 ? 0.7 : 0.5,
+          cnnSimilarity,
+          confidence,
+          matchType,
           url: other.originalFileUrl,
           thumbnailUrl: other.thumbnailUrl,
         });
@@ -131,25 +174,96 @@ router.post('/scan/:stampId', authMiddleware, async (req, res) => {
             stampId: stamp.id,
             sourceUrl: match.url,
             sourceName: `@${match.owner} - ${match.title}`,
-            matchType: 'perceptual_hash',
+            matchType: match.matchType,
             confidence: match.confidence,
             screenshotUrl: match.thumbnailUrl,
+            sourceEngine: 'internal',
           },
         });
         newAlerts.push(alert);
+        try {
+          await sendMonitorAlertEmail({
+            userId: req.user.userId,
+            userEmail: passport.user?.email,
+            displayName: passport.displayName,
+            stamp,
+            alert,
+          });
+        } catch (mailErr) {
+          console.warn('Alert email failed:', mailErr.message);
+        }
       }
+    }
+
+    // External reverse image search (TinEye + Google Vision)
+    let externalResults = [];
+    try {
+      externalResults = await performExternalScan(stamp);
+      for (const result of externalResults) {
+        const existing = await prisma.monitorAlert.findFirst({
+          where: { monitorId: monitor.id, externalId: result.externalId },
+        });
+        if (!existing) {
+          const alert = await prisma.monitorAlert.create({
+            data: {
+              monitorId: monitor.id,
+              stampId: stamp.id,
+              sourceUrl: result.url,
+              sourceName: result.domain || 'External',
+              matchType: result.matchLevel === 'full' ? 'exact_match' : 'partial_match',
+              confidence: result.score || 0.7,
+              sourceEngine: result.engine,
+              externalId: result.externalId,
+            },
+          });
+          newAlerts.push(alert);
+          try {
+            await sendMonitorAlertEmail({
+              userId: req.user.userId,
+              userEmail: passport.user?.email,
+              displayName: passport.displayName,
+              stamp,
+              alert,
+            });
+          } catch (mailErr) {
+            console.warn('Alert email failed:', mailErr.message);
+          }
+        }
+      }
+    } catch (extErr) {
+      console.warn('External scan failed (non-fatal):', extErr.message);
     }
 
     await prisma.monitor.update({
       where: { id: monitor.id },
-      data: { lastScanAt: new Date(), matchCount: { increment: newAlerts.length } },
+      data: {
+        lastScanAt: new Date(),
+        nextScanAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        matchCount: { increment: newAlerts.length },
+      },
     });
+
+    for (const alert of newAlerts) {
+      setImmediate(() => {
+        notifyWebhook(passport.id, 'monitor.alert', {
+          alertId: alert.id,
+          stampId: stamp.id,
+          monitorId: monitor.id,
+          matchType: alert.matchType,
+          sourceUrl: alert.sourceUrl,
+          sourceEngine: alert.sourceEngine,
+          confidence: alert.confidence,
+        });
+      });
+    }
 
     res.json({
       scanned: allOtherStamps.length,
-      matchesFound: matches.length,
+      externalResults: externalResults.length,
+      matchesFound: matches.length + externalResults.length,
       newAlerts: newAlerts.length,
       matches,
+      externalMatches: externalResults,
     });
   } catch (error) {
     console.error('Error scanning:', error);
@@ -209,6 +323,18 @@ function hammingDistance(hash1, hash2) {
     }
   }
   return distance;
+}
+
+function cosineSimilarity(a, b) {
+  if (!a || !b || a.length !== b.length || a.length === 0) return 0;
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 module.exports = router;

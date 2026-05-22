@@ -12,7 +12,13 @@ import SharePage from '@/pages/SharePage';
 import MonitorPage from '@/pages/MonitorPage';
 import TakedownPage from '@/pages/TakedownPage';
 import RegistryPage from '@/pages/RegistryPage';
-import { Loader2 } from 'lucide-react'; 
+import TermsPage from '@/pages/TermsPage';
+import PrivacyPage from '@/pages/PrivacyPage';
+import LegalGuidePage from '@/pages/LegalGuidePage';
+import RegisterCopyrightPage from '@/pages/RegisterCopyrightPage';
+import NotificationsPage from '@/pages/NotificationsPage';
+import { Loader2 } from 'lucide-react';
+import { ToastProvider } from '@/components/ui/toast'; 
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -48,9 +54,14 @@ function AppRoutes() {
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/stamp" element={<ProtectedRoute><StampPage /></ProtectedRoute>} />
       <Route path="/monitor" element={<ProtectedRoute><MonitorPage /></ProtectedRoute>} />
+      <Route path="/notifications" element={<ProtectedRoute><NotificationsPage /></ProtectedRoute>} />
       <Route path="/takedowns" element={<ProtectedRoute><TakedownPage /></ProtectedRoute>} />
       <Route path="/verify" element={<VerifyPage />} />
       <Route path="/registry" element={<RegistryPage />} />
+      <Route path="/terms" element={<TermsPage />} />
+      <Route path="/privacy" element={<PrivacyPage />} />
+      <Route path="/legal-guide" element={<LegalGuidePage />} />
+      <Route path="/register-copyright" element={<RegisterCopyrightPage />} />
       <Route path="/p/:stampId" element={<SharePage />} />
       <Route path="/u/:username" element={<PublicPassport />} />
       <Route path="/" element={user ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
@@ -61,9 +72,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </ToastProvider>
     </BrowserRouter>
   );
 }

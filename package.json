@@ -1,4 +1,7 @@
 {
+  "name": "proofstamp",
+  "private": true,
+  "description": "ProofStamp — admissibility-oriented evidence for creative work",
   "devDependencies": {
     "prisma": "^5.22.0"
   },

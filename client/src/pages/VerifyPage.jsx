@@ -3,6 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { useDropzone } from 'react-dropzone';
 import api from '@/lib/api';
 import Layout from '@/components/Layout';
+import LegalEvidenceSummary from '@/components/LegalEvidenceSummary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -271,6 +272,30 @@ function VerificationResult({ result, onReset }) {
                 </p>
               </div>
             </div>
+
+            {outcome === 'A' && result.verification && (
+              <div className="p-3 bg-indigo-50 rounded-lg border border-indigo-100 text-sm space-y-2">
+                <p className="font-medium text-indigo-900">Legal evidence layers</p>
+                <div className="text-indigo-800">
+                  <LegalEvidenceSummary stamp={stamp} verification={result.verification} />
+                </div>
+                <p className="text-xs">RSA signature: {result.verification.signatureValid ? 'valid' : 'invalid'}</p>
+                {result.verification.legalArtifactsUrl && (
+                  <a
+                    href={result.verification.legalArtifactsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-indigo-600 hover:underline inline-flex items-center gap-1"
+                  >
+                    <Shield className="h-3 w-3" /> View evidence catalog
+                  </a>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Technical verification only — not a legal ruling.{' '}
+                  <Link to="/legal-guide" className="text-indigo-600 hover:underline">Learn more</Link>
+                </p>
+              </div>
+            )}
 
             {stamp.license?.includes('AI') && (
               <div className="p-3 bg-red-50 rounded-lg border border-red-100">

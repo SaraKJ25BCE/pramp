@@ -8,12 +8,27 @@ datasource db {
 }
 
 model User {
+  id            String             @id @default(cuid())
+  googleId      String?            @unique
+  email         String             @unique
+  emailVerified Boolean            @default(false)
+  avatarUrl     String?
+  plan          String             @default("pro")
+  createdAt     DateTime           @default(now())
+  passport      Passport?
+  notifications UserNotification[]
+}
+
+model EmailVerification {
   id        String   @id @default(cuid())
-  googleId  String   @unique
-  email     String   @unique
-  avatarUrl String?
+  email     String
+  codeHash  String
+  purpose   String
+  expiresAt DateTime
+  attempts  Int      @default(0)
   createdAt DateTime @default(now())
-  passport  Passport?
+
+  @@index([email, purpose])
 }
 
 model Passport {
@@ -23,42 +38,80 @@ model Passport {
   displayName String
   publicKey   String   @db.Text
   privateKey  String   @db.Text
+  webhookUrl  String?  @db.Text
   createdAt   DateTime @default(now())
   user        User     @relation(fields: [userId], references: [id])
   stamps      Stamp[]
   monitors    Monitor[]
   takedowns   Takedown[]
+  apiKeys     ApiKey[]
+}
+
+model ApiKey {
+  id           String    @id @default(cuid())
+  passportId   String
+  name         String?
+  keyPrefix    String
+  keyHash      String    @unique
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+  passport     Passport  @relation(fields: [passportId], references: [id], onDelete: Cascade)
+
+  @@index([passportId])
 }
 
 model Stamp {
-  id              String   @id
-  passportId      String
-  originalHash    String
-  stampedHash     String?
-  pHash           String?
-  dHash           String?
-  title           String
-  description     String?
-  license         String
-  category        String   @default("image")
-  fileType        String
-  fileName        String?
-  fileSize        Int?
-  originalFileUrl String
-  stampedFileUrl  String?
-  thumbnailUrl    String?
-  signature       String   @db.Text
-  certificateUrl  String?
-  metadataJson    String?  @db.Text
-  proofChain      String?  @db.Text
-  aiOptOut        Boolean  @default(true)
-  monitorEnabled  Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  passport        Passport @relation(fields: [passportId], references: [id])
-  monitors        Monitor[]
-  alerts          MonitorAlert[]
-  takedowns       Takedown[]
-  versions        StampVersion[]
+  id               String   @id
+  passportId       String
+  originalHash     String
+  stampedHash      String?
+  pHash            String?
+  dHash            String?
+  embedding        Float[]
+  audioFingerprint String?  @db.Text
+  videoFingerprint String?  @db.Text
+  title            String
+  description      String?
+  license          String
+  category         String   @default("image")
+  fileType         String
+  fileName         String?
+  fileSize         Int?
+  originalFileUrl  String
+  stampedFileUrl   String?
+  thumbnailUrl     String?
+  c2paManifestUrl  String?
+  c2paEnabled      Boolean  @default(true)
+  signature        String   @db.Text
+  certificateUrl         String?
+  evidenceCertificateUrl String?
+  metadataJson           String?  @db.Text
+  proofChain             String?  @db.Text
+  tsaToken               Bytes?
+  tsaUrl                 String?
+  tsaTimestamp           DateTime?
+  tsaVerifyStatus          String?
+  tsaChainJson             String?   @db.Text
+  tsaTier                  String?   @default("development")
+  tsaProviderName          String?
+  creatorAttestationAt     DateTime?
+  creatorAttestationName   String?
+  creatorAttestationStatement String?
+  creatorAttestationPayload   String?  @db.Text
+  creatorAttestationSignature String?  @db.Text
+  creatorAttestationCity      String?
+  creatorAttestationCountry   String?
+  creatorDeclarationUrl       String?
+  tsaStatus                   String?  @default("pending")
+  aiOptOut               Boolean  @default(true)
+  monitorEnabled   Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  passport         Passport @relation(fields: [passportId], references: [id])
+  monitors         Monitor[]
+  alerts           MonitorAlert[]
+  takedowns        Takedown[]
+  versions         StampVersion[]
+  stampAnchors     StampAnchor[]
 
   @@index([pHash])
   @@index([originalHash])
@@ -67,77 +120,159 @@ model Stamp {
 }
 
 model StampVersion {
-  id          String   @id @default(cuid())
-  stampId     String
-  version     Int
-  label       String
-  fileHash    String
-  fileUrl     String
+  id           String   @id @default(cuid())
+  stampId      String
+  version      Int
+  label        String
+  fileHash     String
+  prevHash     String?
+  chainHash    String?
+  signature    String?  @db.Text
+  fileUrl      String
   thumbnailUrl String?
-  fileSize    Int?
-  note        String?
-  createdAt   DateTime @default(now())
-  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  fileSize     Int?
+  note         String?
+  createdAt    DateTime @default(now())
+  stamp        Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
 
   @@index([stampId])
   @@unique([stampId, version])
 }
 
 model Monitor {
-  id          String   @id @default(cuid())
-  passportId  String
-  stampId     String
-  status      String   @default("active")
-  lastScanAt  DateTime?
-  matchCount  Int      @default(0)
-  createdAt   DateTime @default(now())
-  passport    Passport @relation(fields: [passportId], references: [id])
-  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
-  alerts      MonitorAlert[]
+  id            String    @id @default(cuid())
+  passportId    String
+  stampId       String
+  status        String    @default("active")
+  scanFrequency String    @default("weekly")
+  nextScanAt    DateTime?
+  lastScanAt    DateTime?
+  matchCount    Int       @default(0)
+  createdAt     DateTime  @default(now())
+  passport      Passport  @relation(fields: [passportId], references: [id])
+  stamp         Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  alerts        MonitorAlert[]
 
   @@unique([passportId, stampId])
   @@index([status])
+  @@index([nextScanAt])
 }
 
 model MonitorAlert {
-  id          String   @id @default(cuid())
-  monitorId   String
-  stampId     String
-  sourceUrl   String
-  sourceName  String?
-  matchType   String
-  confidence  Float
+  id            String   @id @default(cuid())
+  monitorId     String
+  stampId       String
+  sourceUrl     String
+  sourceName    String?
+  matchType     String
+  confidence    Float
   screenshotUrl String?
-  status      String   @default("new")
-  createdAt   DateTime @default(now())
-  monitor     Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
-  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
-  takedown    Takedown?
+  sourceEngine  String?
+  externalId    String?
+  status        String   @default("new")
+  createdAt     DateTime @default(now())
+  monitor       Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  stamp         Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  takedown      Takedown?
 
   @@index([monitorId])
   @@index([stampId])
   @@index([status])
+  @@index([externalId])
 }
 
 model Takedown {
-  id            String   @id @default(cuid())
-  passportId    String
-  stampId       String
-  alertId       String?  @unique
-  platform      String
-  infringingUrl String
-  status        String   @default("draft")
-  dmcaLetter    String?  @db.Text
-  filedAt       DateTime?
-  resolvedAt    DateTime?
-  resolution    String?
-  notes         String?  @db.Text
-  createdAt     DateTime @default(now())
-  passport      Passport @relation(fields: [passportId], references: [id])
-  stamp         Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
-  alert         MonitorAlert? @relation(fields: [alertId], references: [id])
+  id               String    @id @default(cuid())
+  passportId       String
+  stampId          String
+  alertId          String?   @unique
+  platform         String
+  infringingUrl    String
+  status           String    @default("draft")
+  dmcaLetter       String?   @db.Text
+  submissionMethod String?
+  externalTicketId String?
+  responseDeadline DateTime?
+  escalatedAt      DateTime?
+  autoSubmitted    Boolean   @default(false)
+  filedAt          DateTime?
+  resolvedAt       DateTime?
+  resolution       String?
+  notes            String?   @db.Text
+  createdAt        DateTime  @default(now())
+  passport         Passport  @relation(fields: [passportId], references: [id])
+  stamp            Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  alert            MonitorAlert? @relation(fields: [alertId], references: [id])
 
   @@index([passportId])
   @@index([stampId])
   @@index([status])
+  @@index([responseDeadline])
+}
+
+model BlockchainAnchor {
+  id               String        @id @default(cuid())
+  chain            String
+  txHash           String
+  merkleRoot       String
+  stampCount       Int           @default(0)
+  anchoredAt       DateTime
+  blockchainStatus String        @default("pending")
+  otsPendingBytes  Bytes?
+  otsConfirmedBytes Bytes?
+  auditHeadHash    String?
+  createdAt        DateTime      @default(now())
+  stamps           StampAnchor[]
+
+  @@index([merkleRoot])
+}
+
+model StampAnchor {
+  id          String   @id @default(cuid())
+  stampId     String
+  anchorId    String
+  merkleProof String   @db.Text
+  leafHash    String
+  createdAt   DateTime @default(now())
+  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  anchor      BlockchainAnchor @relation(fields: [anchorId], references: [id], onDelete: Cascade)
+
+  @@unique([stampId, anchorId])
+  @@index([stampId])
+}
+
+model UserNotification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  body      String?  @db.Text
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id              String   @id @default(cuid())
+  userId          String?
+  passportId      String?
+  stampId         String?
+  action          String
+  metadataJson    String?  @db.Text
+  ipAddress       String?
+  userAgent       String?  @db.Text
+  previousLogHash String?
+  entryHash       String
+  createdAt       DateTime @default(now())
+
+  @@index([stampId])
+  @@index([passportId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
 }

@@ -4,14 +4,20 @@ import api from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Shield, CheckCircle2, Calendar, Lock, ExternalLink,
-  Copy, Loader2, AlertTriangle, Fingerprint, GitBranch, Upload
+  Shield, CheckCircle2, Calendar, ExternalLink,
+  Copy, Loader2, AlertTriangle, Fingerprint, GitBranch, Upload,
+  Scale, Download
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import LegalEvidenceSummary from '@/components/LegalEvidenceSummary';
+import { downloadCounselPacket, MARKETING } from '@/lib/legalProof';
+import { downloadStampedFile, hasStampedFile } from '@/lib/stampFiles';
+import { useToast } from '@/components/ui/toast';
 
 export default function SharePage() {
   const { stampId } = useParams();
-  const { user } = useAuth();
+  const { passport: authPassport } = useAuth();
+  const { toast } = useToast();
   const [stamp, setStamp] = useState(null);
   const [passport, setPassport] = useState(null);
   const [versions, setVersions] = useState([]);
@@ -96,7 +102,39 @@ export default function SharePage() {
   }
 
   const shareUrl = `${window.location.origin}/p/${stamp.id}`;
-  const isOwner = user && stamp && passport;
+  const apiUrl = import.meta.env.VITE_API_URL;
+  const isOwner = !!(stamp?.passportId && authPassport?.id === stamp.passportId);
+  const attested = !!(stamp.creatorAttestationAt && stamp.creatorAttestationSignature);
+  const systemCertUrl =
+    stamp.evidenceCertificateUrl || `${apiUrl}/legal/${stamp.id}/system-certificate`;
+
+  async function handleCounselDownload() {
+    try {
+      await downloadCounselPacket(stamp.id);
+    } catch (e) {
+      const msg = e.message || '';
+      if (msg.includes('REATTEST') || msg.includes('attestation')) {
+        toast('Re-attestation required: sign your declaration again.', 'warning');
+      } else if (msg.includes('401') || msg.toLowerCase().includes('auth')) {
+        toast('Sign in as the creator to download the Counsel Evidence Packet.', 'error');
+      } else {
+        toast(msg || 'Complete creator declaration first', 'error');
+      }
+    }
+  }
+
+  function copySharePage() {
+    copyToClipboard(shareUrl, 'share');
+    toast('Share page link copied', 'default');
+  }
+
+  async function handleStampedDownload() {
+    try {
+      await downloadStampedFile(stamp);
+    } catch (e) {
+      toast(e.message || 'Download failed', 'error');
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100">
@@ -175,12 +213,82 @@ export default function SharePage() {
               </div>
             </div>
 
-            {/* Protection info */}
+            <div className="mt-6 p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+              <h3 className="font-semibold text-indigo-900 text-sm mb-2">Legal evidence on record</h3>
+              <div className="text-indigo-800">
+                <LegalEvidenceSummary stamp={stamp} />
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <Button variant="outline" size="sm" asChild>
+                  <a href={`${apiUrl}/legal/${stamp.id}/artifacts`} target="_blank" rel="noreferrer">
+                    Evidence catalog
+                  </a>
+                </Button>
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={`/verify?id=${stamp.id}`}>Verify this work</Link>
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-wrap gap-3 justify-center">
+              {isOwner && attested ? (
+                <Button
+                  className="bg-indigo-700 hover:bg-indigo-800"
+                  onClick={handleCounselDownload}
+                >
+                  <Scale className="h-4 w-4 mr-2" />
+                  {MARKETING.downloadCounselPacketCta}
+                </Button>
+              ) : isOwner ? (
+                <Button className="bg-indigo-700 hover:bg-indigo-800" asChild>
+                  <Link to={`/stamp?sign=${stamp.id}`}>
+                    <Scale className="h-4 w-4 mr-2" />
+                    Sign declaration for Counsel Packet
+                  </Link>
+                </Button>
+              ) : (
+                <Button
+                  className="bg-indigo-700 hover:bg-indigo-800"
+                  disabled
+                  title="Only the creator can download the Counsel Evidence Packet"
+                >
+                  <Scale className="h-4 w-4 mr-2" />
+                  {MARKETING.downloadCounselPacketCta}
+                </Button>
+              )}
+              <Button variant="outline" onClick={copySharePage}>
+                <ExternalLink className="h-4 w-4 mr-2" />
+                {copied === 'share' ? 'Copied!' : 'Share Page'}
+              </Button>
+              {hasStampedFile(stamp) && (
+                <Button variant="outline" onClick={handleStampedDownload}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Stamped file
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => window.open(systemCertUrl, '_blank')}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                System cert
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => window.open(`${apiUrl}/stamps/${stamp.id}/proof`, '_blank')}
+              >
+                Proof Bundle (JSON)
+              </Button>
+              <Button variant="outline" asChild>
+                <Link to="/legal-guide">What this proves</Link>
+              </Button>
+            </div>
+
             <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
                 { label: 'Category', value: stamp.category },
                 { label: 'Format', value: stamp.fileType?.toUpperCase() },
-                { label: 'Protection', value: 'Multi-layer' },
+                { label: 'Protection', value: 'Multi-layer legal proof' },
                 { label: 'AI Training', value: stamp.aiOptOut ? 'Prohibited' : 'Allowed', color: stamp.aiOptOut ? 'text-red-600' : 'text-green-600' },
               ].map((item) => (
                 <div key={item.label} className="p-3 bg-gray-50 rounded-lg text-center">
@@ -282,24 +390,18 @@ export default function SharePage() {
               </div>
             )}
 
-            {/* Actions */}
-            <div className="mt-6 flex flex-wrap gap-3">
-              <Button variant="outline" size="sm" onClick={() => copyToClipboard(shareUrl, 'link')}>
+            <div className="mt-4 flex flex-wrap gap-2 justify-center text-sm">
+              <Button variant="ghost" size="sm" onClick={() => copyToClipboard(shareUrl, 'link')}>
                 <Copy className="h-4 w-4 mr-1.5" />
-                {copied === 'link' ? 'Copied!' : 'Copy Link'}
+                {copied === 'link' ? 'Copied!' : 'Copy link'}
               </Button>
               {stamp.certificateUrl && (
-                <Button variant="outline" size="sm" asChild>
+                <Button variant="ghost" size="sm" asChild>
                   <a href={stamp.certificateUrl} target="_blank" rel="noreferrer">
                     <ExternalLink className="h-4 w-4 mr-1.5" /> Certificate PDF
                   </a>
                 </Button>
               )}
-              <Button variant="outline" size="sm" asChild>
-                <Link to={`/verify?id=${stamp.id}`}>
-                  <Shield className="h-4 w-4 mr-1.5" /> Full Verification
-                </Link>
-              </Button>
             </div>
           </div>
         </div>

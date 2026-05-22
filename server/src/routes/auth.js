@@ -1,10 +1,14 @@
 const express = require('express');
 const passport = require('passport');
-const jwt = require('jsonwebtoken');
 const authMiddleware = require('../middleware/auth');
 const prisma = require('../config/prisma');
+const { issueAuthToken } = require('../utils/authTokens');
+const { authMeLimiter } = require('../middleware/rateLimiter');
+const emailAuthRoutes = require('./emailAuth');
 
 const router = express.Router();
+
+router.use('/email', emailAuthRoutes);
 
 router.get(
   '/google',
@@ -16,21 +20,13 @@ router.get(
   passport.authenticate('google', { session: false, failureRedirect: '/auth/failure' }),
   (req, res) => {
     const user = req.user;
-    const token = jwt.sign(
-      {
-        userId: user.id,
-        passportId: user.passport?.id,
-        username: user.passport?.username,
-      },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    res.redirect(`${process.env.CLIENT_URL}/auth/callback?token=${token}`);
+    const token = issueAuthToken(user);
+    const needsSetup = user.passport?.username ? '0' : '1';
+    res.redirect(`${process.env.CLIENT_URL}/auth/callback?token=${token}&needsSetup=${needsSetup}`);
   }
 );
 
-router.get('/me', authMiddleware, async (req, res) => {
+router.get('/me', authMeLimiter, authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },

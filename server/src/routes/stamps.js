@@ -4,21 +4,51 @@ const axios = require('axios');
 const FormData = require('form-data');
 const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 const QRCode = require('qrcode');
-const authMiddleware = require('../middleware/auth');
+const authOrApiKey = require('../middleware/authOrApiKey');
 const upload = require('../middleware/upload');
 const prisma = require('../config/prisma');
 const { uploadBuffer, getThumbnailUrl } = require('../config/cloudinary');
+const { decryptPrivateKey, computeHash, signData } = require('../utils/crypto');
+const { enforceStampQuota } = require('../middleware/rateLimiter');
+const { findGlobalDuplicate } = require('../services/duplicateCheck');
+const { getTimestampToken, verifyTimestampTokenFull } = require('../services/timestamping');
+const {
+  requiresTsaOnStamp,
+  isLegalProofEnabled,
+  SYSTEM_ATTESTATION,
+  resolveTsaTier,
+  assertTsaAllowedForStamp,
+  TSA_PROVIDER_NAME,
+  MARKETING,
+  getTsaDisplayMeta,
+} = require('../config/legalProof');
+const { generateSystem63Pdf, saveEvidencePdf } = require('../services/legalEvidence');
+const { logAudit, exportAuditChain } = require('../services/auditLog');
+const { buildVerifyInstructions } = require('../utils/verifyInstructions');
+const { formatAnchorsForProof } = require('../services/blockchainProof');
+const { verifyAttestation } = require('../services/creatorAttestation');
+const { hasCreatorAttestation } = require('../config/legalProof');
 
 const router = express.Router();
 
-function generateStampId() {
+function getBaseUrl() {
+  return process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3001}`;
+}
+
+async function generateUniqueStampId() {
   const year = new Date().getFullYear();
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let random = '';
-  for (let i = 0; i < 5; i++) {
-    random += chars.charAt(Math.floor(Math.random() * chars.length));
+  let stampId;
+  let exists = true;
+  while (exists) {
+    let random = '';
+    for (let i = 0; i < 5; i++) {
+      random += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    stampId = `PS-${year}-${random}`;
+    exists = await prisma.stamp.findUnique({ where: { id: stampId } });
   }
-  return `PS-${year}-${random}`;
+  return stampId;
 }
 
 function categorizeFile(mimetype, filename) {
@@ -49,12 +79,8 @@ function getFileExtension(mimetype, filename) {
   return map[mimetype] || 'bin';
 }
 
-function computeHash(buffer) {
-  return crypto.createHash('sha256').update(buffer).digest('hex');
-}
-
-function buildProofChain(stampId, hash, timestamp, prevHash) {
-  const block = { stampId, hash, timestamp, prevHash: prevHash || '0'.repeat(64) };
+function buildProofChain(stampId, hash, timestamp, prevBlockHash) {
+  const block = { stampId, hash, timestamp, prevHash: prevBlockHash || '0'.repeat(64) };
   const blockHash = crypto.createHash('sha256')
     .update(JSON.stringify(block))
     .digest('hex');
@@ -101,25 +127,29 @@ async function generateCertificatePdf(stamp, passport) {
     y -= 24;
   }
 
-  // Proof chain / timestamp section
   y -= 10;
   page.drawLine({ start: { x: 50, y }, end: { x: 545, y }, thickness: 0.5, color: rgb(0.8, 0.8, 0.8) });
   y -= 20;
-  page.drawText('TIMESTAMP PROOF', { x: 50, y, size: 11, font: fontBold, color: rgb(0.1, 0.1, 0.5) });
+  page.drawText('LEGAL TIMESTAMP & EVIDENCE', { x: 50, y, size: 11, font: fontBold, color: rgb(0.1, 0.1, 0.5) });
   y -= 18;
-  page.drawText(`This document certifies that the above file existed and was registered at`, { x: 50, y, size: 9, font });
+  page.drawText(`Registered: ${new Date(stamp.createdAt).toISOString()}`, { x: 50, y, size: 9, font });
   y -= 14;
-  page.drawText(`${new Date(stamp.createdAt).toISOString()} with cryptographic proof.`, { x: 50, y, size: 9, font });
+  if (stamp.tsaTimestamp) {
+    page.drawText(`RFC 3161 TSA: ${new Date(stamp.tsaTimestamp).toISOString()} (${stamp.tsaVerifyStatus || 'pending'})`, { x: 50, y, size: 9, font });
+    y -= 14;
+  }
+  if (stamp.evidenceCertificateUrl) {
+    page.drawText('BSA 2023 Section 63 system certificate issued — see counsel evidence packet.', { x: 50, y, size: 9, font });
+    y -= 14;
+  }
+  page.drawText(`${MARKETING.counselPacketName}: ${getBaseUrl()}/legal/${stamp.id}/litigation-pack`, { x: 50, y, size: 8, font });
   y -= 14;
-  page.drawText(`Any dispute regarding ownership can be resolved by verifying the SHA-256 hash`, { x: 50, y, size: 9, font });
+  page.drawText('Verify SHA-256 hash and RSA signature against creator public key.', { x: 50, y, size: 9, font });
   y -= 14;
-  page.drawText(`and RSA digital signature against the creator's public key.`, { x: 50, y, size: 9, font });
 
-  // QR
   page.drawImage(qrImage, { x: 400, y: y - 80, width: 130, height: 130 });
   page.drawText('Scan to verify', { x: 425, y: y - 95, size: 9, font, color: rgb(0.4, 0.4, 0.4) });
 
-  // AI Notice
   y -= 120;
   page.drawLine({ start: { x: 50, y }, end: { x: 545, y }, thickness: 0.5, color: rgb(0.8, 0.8, 0.8) });
   y -= 18;
@@ -127,7 +157,7 @@ async function generateCertificatePdf(stamp, passport) {
   y -= 16;
   page.drawText(`This work is protected under ${stamp.license}. Use of this content for AI/ML`, { x: 50, y, size: 9, font });
   y -= 14;
-  page.drawText(`training without explicit written permission from the creator is prohibited.`, { x: 50, y, size: 9, font });
+  page.drawText('training without explicit written permission from the creator is prohibited.', { x: 50, y, size: 9, font });
 
   page.drawText('Generated by ProofStamp — cryptographic proof of creative ownership.', {
     x: 50, y: 40, size: 8, font, color: rgb(0.5, 0.5, 0.5),
@@ -136,7 +166,329 @@ async function generateCertificatePdf(stamp, passport) {
   return Buffer.from(await pdfDoc.save());
 }
 
-router.post('/', authMiddleware, upload.single('file'), async (req, res) => {
+async function processStego(file, stampId) {
+  const formData = new FormData();
+  formData.append('file', file.buffer, { filename: file.originalname, contentType: file.mimetype });
+  formData.append('stamp_id', stampId);
+  const response = await axios.post(`${process.env.STEGO_SERVICE_URL}/stamp`, formData, {
+    headers: formData.getHeaders(), timeout: 30000,
+  });
+  return response.data;
+}
+
+async function processAudioFingerprint(file) {
+  try {
+    const formData = new FormData();
+    formData.append('file', file.buffer, { filename: file.originalname, contentType: file.mimetype });
+    const response = await axios.post(`${process.env.STEGO_SERVICE_URL}/fingerprint/audio`, formData, {
+      headers: formData.getHeaders(), timeout: 30000,
+    });
+    return response.data;
+  } catch (err) {
+    console.error('Audio fingerprinting failed:', err.message);
+    return null;
+  }
+}
+
+async function processVideoFingerprint(file) {
+  try {
+    const formData = new FormData();
+    formData.append('file', file.buffer, { filename: file.originalname, contentType: file.mimetype });
+    const response = await axios.post(`${process.env.STEGO_SERVICE_URL}/fingerprint/video`, formData, {
+      headers: formData.getHeaders(), timeout: 60000,
+    });
+    return response.data;
+  } catch (err) {
+    console.error('Video fingerprinting failed:', err.message);
+    return null;
+  }
+}
+
+async function runBackgroundTasks(stampId, file, stampedBuffer, passportRecord, isImage, category, user = null) {
+  const fs = require('fs');
+  const path = require('path');
+  const uploadsDir = path.join(__dirname, '../../uploads');
+  const baseUrl = getBaseUrl();
+
+  try {
+    const uploads = [
+      uploadBuffer(file.buffer, {
+        folder: `proofstamp/${category}`,
+        public_id: stampId + '-original',
+        resource_type: isImage ? 'image' : 'raw',
+      }),
+    ];
+    if (stampedBuffer) {
+      uploads.push(uploadBuffer(stampedBuffer, {
+        folder: 'proofstamp/stamped',
+        public_id: stampId + '-stamped',
+      }));
+    }
+
+    const [origCdn, stampedCdn] = await Promise.all(uploads);
+
+    const cdnUpdate = {
+      originalFileUrl: origCdn.secure_url,
+      thumbnailUrl: isImage ? getThumbnailUrl(origCdn.secure_url) : null,
+    };
+    if (stampedCdn) {
+      cdnUpdate.stampedFileUrl = stampedCdn.secure_url;
+      cdnUpdate.thumbnailUrl = getThumbnailUrl(origCdn.secure_url);
+    }
+
+    await prisma.stamp.update({ where: { id: stampId }, data: cdnUpdate });
+
+    const updatedStamp = await prisma.stamp.findUnique({ where: { id: stampId } });
+    const certBuffer = await generateCertificatePdf(updatedStamp, passportRecord);
+    const certDir = path.join(uploadsDir, 'certificates');
+    if (!fs.existsSync(certDir)) fs.mkdirSync(certDir, { recursive: true });
+    const certLocalPath = path.join(certDir, `${stampId}.pdf`);
+    fs.writeFileSync(certLocalPath, certBuffer);
+    await prisma.stamp.update({
+      where: { id: stampId },
+      data: { certificateUrl: `${baseUrl}/uploads/certificates/${stampId}.pdf` },
+    });
+
+    const certCdn = await uploadBuffer(certBuffer, {
+      folder: 'proofstamp/certificates',
+      public_id: stampId + '-cert',
+      resource_type: 'raw',
+    });
+    await prisma.stamp.update({
+      where: { id: stampId },
+      data: { certificateUrl: certCdn.secure_url },
+    });
+
+    // C2PA manifest embedding (for images)
+    if (isImage && updatedStamp.c2paEnabled !== false) {
+      try {
+        const c2paFormData = new FormData();
+        c2paFormData.append('file', stampedBuffer || file.buffer, {
+          filename: 'image.png',
+          contentType: 'image/png',
+        });
+        c2paFormData.append('stamp_id', stampId);
+        c2paFormData.append('creator_name', passportRecord.displayName);
+        c2paFormData.append('creator_handle', `@${passportRecord.username}`);
+        c2paFormData.append('title', updatedStamp.title || '');
+        c2paFormData.append('license_name', updatedStamp.license || 'All Rights Reserved');
+        c2paFormData.append('do_not_train', String(updatedStamp.aiOptOut !== false));
+
+        const c2paResp = await axios.post(
+          `${process.env.STEGO_SERVICE_URL}/c2pa`,
+          c2paFormData,
+          { headers: c2paFormData.getHeaders(), timeout: 30000 }
+        );
+
+        if (c2paResp.data?.c2pa_image_base64) {
+          const c2paBuffer = Buffer.from(c2paResp.data.c2pa_image_base64, 'base64');
+          const c2paCdn = await uploadBuffer(c2paBuffer, {
+            folder: 'proofstamp/c2pa',
+            public_id: stampId + '-c2pa',
+          });
+          await prisma.stamp.update({
+            where: { id: stampId },
+            data: { c2paManifestUrl: c2paCdn.secure_url },
+          });
+        }
+      } catch (c2paErr) {
+        console.warn(`C2PA manifest failed for ${stampId} (non-fatal):`, c2paErr.message);
+      }
+    }
+
+    const originalExt = updatedStamp.fileType || 'bin';
+    try { fs.unlinkSync(path.join(uploadsDir, 'originals', `${stampId}.${originalExt}`)); } catch (e) {}
+    if (stampedBuffer) {
+      try { fs.unlinkSync(path.join(uploadsDir, 'stamped', `${stampId}.png`)); } catch (e) {}
+    }
+    try { fs.unlinkSync(certLocalPath); } catch (e) {}
+
+    if (isLegalProofEnabled()) {
+      let stampForLegal = await prisma.stamp.findUnique({ where: { id: stampId } });
+      if (!stampForLegal) return;
+
+      if (stampForLegal.tsaToken) {
+        const tokenBuf = Buffer.isBuffer(stampForLegal.tsaToken)
+          ? stampForLegal.tsaToken
+          : Buffer.from(stampForLegal.tsaToken);
+        const verify = verifyTimestampTokenFull(tokenBuf, stampForLegal.originalHash);
+        await prisma.stamp.update({
+          where: { id: stampId },
+          data: { tsaVerifyStatus: verify.valid ? 'valid' : 'invalid' },
+        });
+        stampForLegal = await prisma.stamp.findUnique({ where: { id: stampId } });
+      }
+
+      const s63Buffer = await generateSystem63Pdf(stampForLegal, passportRecord, user);
+      const evidenceUrl = await saveEvidencePdf(s63Buffer, stampId, 'evidence', 'bsa-section63-system');
+      await prisma.stamp.update({
+        where: { id: stampId },
+        data: { evidenceCertificateUrl: evidenceUrl },
+      });
+
+      await logAudit(null, {
+        action: 'SECTION_63_ISSUED',
+        stampId,
+        passportId: passportRecord.id,
+        userId: user?.id,
+      });
+    }
+  } catch (err) {
+    console.error(`Background tasks failed for ${stampId}:`, err.message);
+  }
+}
+
+async function stampFile(file, passportRecord, privateKey, title, description, license, lastStamp) {
+  const category = categorizeFile(file.mimetype, file.originalname);
+  const fileType = getFileExtension(file.mimetype, file.originalname);
+  const isImage = category === 'image' && !file.mimetype.includes('svg');
+  const isAudio = category === 'audio';
+  const isVideo = category === 'video';
+  const serverHash = computeHash(file.buffer);
+
+  const stampId = await generateUniqueStampId();
+
+  const fs = require('fs');
+  const path = require('path');
+  const uploadsDir = path.join(__dirname, '../../uploads');
+  const originalExt = fileType || 'bin';
+
+  const originalsDir = path.join(uploadsDir, 'originals');
+  if (!fs.existsSync(originalsDir)) fs.mkdirSync(originalsDir, { recursive: true });
+  const originalLocalPath = path.join(originalsDir, `${stampId}.${originalExt}`);
+  fs.writeFileSync(originalLocalPath, file.buffer);
+
+  const baseUrl = getBaseUrl();
+  const originalFileUrl = `${baseUrl}/uploads/originals/${stampId}.${originalExt}`;
+  let thumbnailUrl = isImage ? originalFileUrl : null;
+
+  let pHash = null, dHash = null, stampedBuffer = null, stampedHash = null;
+  let stampedFileUrl = null;
+  let audioFingerprint = null, videoFingerprint = null;
+
+  if (isImage) {
+    try {
+      const stegoData = await processStego(file, stampId);
+      pHash = stegoData.pHash;
+      dHash = stegoData.dHash;
+
+      if (stegoData.stamped_base64) {
+        stampedBuffer = Buffer.from(stegoData.stamped_base64, 'base64');
+        stampedHash = computeHash(stampedBuffer);
+
+        const stampedDir = path.join(uploadsDir, 'stamped');
+        if (!fs.existsSync(stampedDir)) fs.mkdirSync(stampedDir, { recursive: true });
+        const stampedLocalPath = path.join(stampedDir, `${stampId}.png`);
+        fs.writeFileSync(stampedLocalPath, stampedBuffer);
+        stampedFileUrl = `${baseUrl}/uploads/stamped/${stampId}.png`;
+        thumbnailUrl = stampedFileUrl;
+      }
+    } catch (err) {
+      console.error(`Stego failed for ${stampId}:`, err.message);
+    }
+  } else if (isAudio) {
+    const result = await processAudioFingerprint(file);
+    if (result) audioFingerprint = JSON.stringify(result);
+  } else if (isVideo) {
+    const result = await processVideoFingerprint(file);
+    if (result) videoFingerprint = JSON.stringify(result);
+  }
+
+  const timestamp = new Date().toISOString();
+  const signPayload = `${stampId}|${passportRecord.id}|${serverHash}|${timestamp}`;
+  const signature = signData(signPayload, privateKey);
+
+  let prevBlockHash = null;
+  if (lastStamp?.proofChain) {
+    try {
+      const prevChain = JSON.parse(lastStamp.proofChain);
+      prevBlockHash = prevChain.blockHash;
+    } catch (e) {}
+  }
+
+  const proofChain = JSON.stringify(
+    buildProofChain(stampId, serverHash, timestamp, prevBlockHash)
+  );
+
+  const protections = ['sha256-fingerprint', 'rsa-signature', 'timestamp-proof'];
+  if (isImage) protections.push('perceptual-hash', 'dwt-dct-watermark');
+  if (isAudio && audioFingerprint) protections.push('audio-fingerprint');
+  if (isVideo && videoFingerprint) protections.push('video-fingerprint');
+
+  const tsaTier = resolveTsaTier();
+  let tsaFields = { tsaTier, tsaProviderName: TSA_PROVIDER_NAME };
+  let tsaPending = false;
+
+  if (requiresTsaOnStamp()) {
+    const allowed = assertTsaAllowedForStamp();
+    if (!allowed.ok) {
+      throw new Error(allowed.error);
+    }
+    try {
+      const tsa = await getTimestampToken(serverHash);
+      protections.push('rfc3161-trusted-timestamp');
+      if (isLegalProofEnabled()) protections.push('bsa-section63-system-certificate');
+      tsaFields = {
+        ...tsaFields,
+        tsaToken: tsa.tsToken,
+        tsaUrl: tsa.tsaUrl,
+        tsaTimestamp: tsa.timestamp,
+        tsaVerifyStatus: tsa.signatureVerified === false ? 'invalid' : 'valid',
+        tsaStatus: 'confirmed',
+        tsaProviderName: tsa.tsaProviderName || TSA_PROVIDER_NAME,
+        tsaChainJson: tsa.signerInfo ? JSON.stringify(tsa.signerInfo) : null,
+      };
+    } catch (tsaErr) {
+      console.error(`TSA failed for ${stampId}, queuing retry:`, tsaErr.message);
+      tsaPending = true;
+      tsaFields.tsaStatus = 'pending';
+      protections.push('tsa-pending-retry');
+    }
+  }
+
+  const metadata = {
+    originalName: file.originalname,
+    mimeType: file.mimetype,
+    size: file.buffer.length,
+    category,
+    stampedAt: timestamp,
+    signPayload,
+    protections,
+    tsaPending,
+    tsaDisplay: getTsaDisplayMeta(),
+  };
+
+  const stamp = await prisma.stamp.create({
+    data: {
+      id: stampId,
+      passportId: passportRecord.id,
+      originalHash: serverHash,
+      stampedHash,
+      pHash,
+      dHash,
+      audioFingerprint,
+      videoFingerprint,
+      title,
+      description: description || null,
+      license: license || 'All Rights Reserved',
+      category,
+      fileType,
+      fileName: file.originalname,
+      fileSize: file.buffer.length,
+      originalFileUrl,
+      stampedFileUrl,
+      thumbnailUrl,
+      signature,
+      metadataJson: JSON.stringify(metadata),
+      proofChain,
+      ...tsaFields,
+    },
+  });
+
+  return { stamp, stampedBuffer, isImage, category, serverHash };
+}
+
+router.post('/', authOrApiKey, enforceStampQuota, upload.single('file'), async (req, res) => {
   try {
     const { title, description, license, clientHash } = req.body;
     const file = req.file;
@@ -145,200 +497,94 @@ router.post('/', authMiddleware, upload.single('file'), async (req, res) => {
     if (!title) return res.status(400).json({ error: 'Title is required' });
     if (!license) return res.status(400).json({ error: 'License is required' });
 
-    const category = categorizeFile(file.mimetype, file.originalname);
-    const fileType = getFileExtension(file.mimetype, file.originalname);
-    const isImage = category === 'image' && !file.mimetype.includes('svg');
-
     const serverHash = computeHash(file.buffer);
     if (clientHash && clientHash !== serverHash) {
       return res.status(400).json({ error: 'File integrity check failed — hash mismatch' });
     }
 
-    // Parallel: duplicate check + passport + ID check + last stamp
-    const [existing, passportRecord] = await Promise.all([
-      prisma.stamp.findFirst({ where: { originalHash: serverHash } }),
+    const [duplicate, passportRecord] = await Promise.all([
+      findGlobalDuplicate(file, serverHash),
       prisma.passport.findUnique({ where: { userId: req.user.userId } }),
     ]);
 
-    if (existing) {
-      return res.status(409).json({
-        error: 'This exact file has already been stamped',
-        existingStampId: existing.id,
-      });
+    if (duplicate) {
+      return res.status(409).json(duplicate);
     }
 
-    let stampId = generateStampId();
+    const privateKey = decryptPrivateKey(passportRecord.privateKey, {
+      userId: req.user.userId,
+      passportId: passportRecord.id,
+    });
 
-    // Save original locally (instant — milliseconds)
-    const fs = require('fs');
-    const path = require('path');
-    const uploadsDir = path.join(__dirname, '../../uploads');
-    const originalExt = fileType || 'bin';
-    const originalLocalPath = path.join(uploadsDir, 'originals', `${stampId}.${originalExt}`);
-    fs.writeFileSync(originalLocalPath, file.buffer);
-    const localBaseUrl = `http://localhost:${process.env.PORT || 3001}`;
-    const originalFileUrl = `${localBaseUrl}/uploads/originals/${stampId}.${originalExt}`;
-    let thumbnailUrl = isImage ? originalFileUrl : null;
+    const lastStamp = await prisma.stamp.findFirst({
+      where: { passportId: passportRecord.id },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, proofChain: true },
+    });
 
-    // Parallel: stego (hash+watermark) + last stamp lookup
-    let pHash = null, dHash = null, stampedBuffer = null, stampedHash = null;
-    let stampedFileUrl = null;
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { id: true, email: true, plan: true },
+    });
 
-    const parallelOps = [
-      prisma.stamp.findFirst({ where: { passportId: passportRecord.id }, orderBy: { createdAt: 'desc' }, select: { id: true } }),
-    ];
-
-    if (isImage) {
-      const formData = new FormData();
-      formData.append('file', file.buffer, { filename: file.originalname, contentType: file.mimetype });
-      formData.append('stamp_id', stampId);
-      parallelOps.push(
-        axios.post(`${process.env.STEGO_SERVICE_URL}/stamp`, formData, {
-          headers: formData.getHeaders(), timeout: 30000,
-        })
+    let stampResult;
+    try {
+      stampResult = await stampFile(
+        file, passportRecord, privateKey, title, description, license, lastStamp
       );
-    }
-
-    const results = await Promise.all(parallelOps);
-    const lastStamp = results[0];
-
-    if (isImage && results[1]) {
-      const stegoData = results[1].data;
-      pHash = stegoData.pHash;
-      dHash = stegoData.dHash;
-
-      if (stegoData.stamped_base64) {
-        stampedBuffer = Buffer.from(stegoData.stamped_base64, 'base64');
-        stampedHash = computeHash(stampedBuffer);
-
-        // Save stamped locally (instant)
-        const stampedLocalPath = path.join(uploadsDir, 'stamped', `${stampId}.png`);
-        fs.writeFileSync(stampedLocalPath, stampedBuffer);
-        stampedFileUrl = `${localBaseUrl}/uploads/stamped/${stampId}.png`;
-        thumbnailUrl = stampedFileUrl;
+    } catch (err) {
+      if (err.message?.includes('TSA') || err.message?.includes('imprint') || err.message?.includes('Production mode')) {
+        return res.status(503).json({
+          error: 'LEGAL_TSA_FAILED',
+          message: err.message,
+          detail: err.message,
+        });
       }
+      throw err;
     }
 
-    // Sign (CPU — microseconds)
-    const signData = `${stampId}|${passportRecord.id}|${serverHash}|${new Date().toISOString()}`;
-    const sign = crypto.createSign('SHA256');
-    sign.update(signData);
-    const signature = sign.sign(passportRecord.privateKey, 'base64');
+    const { stamp, stampedBuffer, isImage, category } = stampResult;
 
-    const proofChain = JSON.stringify(
-      buildProofChain(stampId, serverHash, new Date().toISOString(), lastStamp?.id ? computeHash(Buffer.from(lastStamp.id)) : null)
-    );
+    await logAudit(req, {
+      action: 'STAMP_CREATED',
+      stampId: stamp.id,
+      passportId: passportRecord.id,
+      metadata: { title, category },
+    });
 
-    const metadata = {
-      originalName: file.originalname,
-      mimeType: file.mimetype,
-      size: file.buffer.length,
-      category,
-      stampedAt: new Date().toISOString(),
-      protections: [
-        'sha256-fingerprint', 'rsa-signature', 'timestamp-proof',
-        ...(isImage ? ['perceptual-hash', 'dwt-dct-watermark'] : []),
-      ],
-    };
+    const baseUrl = getBaseUrl();
+    const usage =
+      typeof req.stampsRemaining === 'number'
+        ? {
+            stampsRemaining: req.stampsRemaining,
+            monthlyLimit: require('../config/fairUse').resolveFairUseMonthly(),
+          }
+        : null;
 
-    // Create stamp record with local URLs
-    const stamp = await prisma.stamp.create({
-      data: {
-        id: stampId,
-        passportId: passportRecord.id,
-        originalHash: serverHash,
-        stampedHash,
-        pHash,
-        dHash,
-        title,
-        description: description || null,
-        license,
-        category,
-        fileType,
-        fileName: file.originalname,
-        fileSize: file.buffer.length,
-        originalFileUrl,
-        stampedFileUrl,
-        thumbnailUrl,
-        signature,
-        metadataJson: JSON.stringify(metadata),
-        proofChain,
+    res.status(201).json({
+      stamp,
+      verifyUrl: `${process.env.CLIENT_URL}/verify?id=${stamp.id}`,
+      usage,
+      legalProof: {
+        artifactsUrl: `${baseUrl}/legal/${stamp.id}/artifacts`,
+        counselPacketUrl: `${baseUrl}/legal/${stamp.id}/litigation-pack`,
+        litigationPackUrl: `${baseUrl}/legal/${stamp.id}/litigation-pack`,
+        systemCertificateUrl: `${baseUrl}/legal/${stamp.id}/system-certificate`,
+        attestUrl: `${baseUrl}/legal/${stamp.id}/attest`,
+        tsaVerifyUrl: `${baseUrl}/tsa/verify/${stamp.id}`,
+        tsa: getTsaDisplayMeta(),
+        requiresCreatorAttestation: true,
       },
     });
 
-    // RESPOND NOW — everything else is background
-    res.status(201).json({
-      stamp,
-      verifyUrl: `${process.env.CLIENT_URL}/verify?id=${stampId}`,
-    });
-
-    // Background: upload to Cloudinary CDN + generate certificate (non-blocking)
-    (async () => {
-      try {
-        const uploads = [
-          uploadBuffer(file.buffer, {
-            folder: `proofstamp/${category}`,
-            public_id: stampId + '-original',
-            resource_type: isImage ? 'image' : 'raw',
-          }),
-        ];
-        if (stampedBuffer) {
-          uploads.push(uploadBuffer(stampedBuffer, {
-            folder: 'proofstamp/stamped',
-            public_id: stampId + '-stamped',
-          }));
-        }
-
-        const [origCdn, stampedCdn] = await Promise.all(uploads);
-
-        const cdnUpdate = {
-          originalFileUrl: origCdn.secure_url,
-          thumbnailUrl: isImage ? getThumbnailUrl(origCdn.secure_url) : null,
-        };
-        if (stampedCdn) {
-          cdnUpdate.stampedFileUrl = stampedCdn.secure_url;
-          cdnUpdate.thumbnailUrl = getThumbnailUrl(origCdn.secure_url);
-        }
-
-        await prisma.stamp.update({ where: { id: stampId }, data: cdnUpdate });
-
-        // Generate and upload certificate
-        const updatedStamp = await prisma.stamp.findUnique({ where: { id: stampId } });
-        const certBuffer = await generateCertificatePdf(updatedStamp, passportRecord);
-        const certLocalPath = path.join(uploadsDir, 'certificates', `${stampId}.pdf`);
-        fs.writeFileSync(certLocalPath, certBuffer);
-        await prisma.stamp.update({
-          where: { id: stampId },
-          data: { certificateUrl: `${localBaseUrl}/uploads/certificates/${stampId}.pdf` },
-        });
-
-        const certCdn = await uploadBuffer(certBuffer, {
-          folder: 'proofstamp/certificates',
-          public_id: stampId + '-cert',
-          resource_type: 'raw',
-        });
-        await prisma.stamp.update({
-          where: { id: stampId },
-          data: { certificateUrl: certCdn.secure_url },
-        });
-
-        // Clean up local files after CDN upload
-        try { fs.unlinkSync(originalLocalPath); } catch (e) {}
-        if (stampedBuffer) {
-          try { fs.unlinkSync(path.join(uploadsDir, 'stamped', `${stampId}.png`)); } catch (e) {}
-        }
-      } catch (err) {
-        console.error('Background CDN upload failed:', err.message);
-      }
-    })();
+    runBackgroundTasks(stamp.id, file, stampedBuffer, passportRecord, isImage, category, user);
   } catch (error) {
     console.error('Error creating stamp:', error);
     res.status(500).json({ error: 'Failed to create stamp' });
   }
 });
 
-// Bulk stamp multiple files
-router.post('/bulk', authMiddleware, upload.array('files', 20), async (req, res) => {
+router.post('/bulk', authOrApiKey, enforceStampQuota, upload.array('files', 20), async (req, res) => {
   try {
     const { license, titles } = req.body;
     const files = req.files;
@@ -346,59 +592,74 @@ router.post('/bulk', authMiddleware, upload.array('files', 20), async (req, res)
     if (!files || files.length === 0) return res.status(400).json({ error: 'No files provided' });
 
     const parsedTitles = titles ? JSON.parse(titles) : [];
+    const passportRecord = await prisma.passport.findUnique({
+      where: { userId: req.user.userId },
+    });
+    const privateKey = decryptPrivateKey(passportRecord.privateKey, {
+      userId: req.user.userId,
+      passportId: passportRecord.id,
+    });
+
+    let lastStamp = await prisma.stamp.findFirst({
+      where: { passportId: passportRecord.id },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, proofChain: true },
+    });
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { id: true, email: true, plan: true },
+    });
+
     const results = [];
+    const backgroundJobs = [];
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const title = parsedTitles[i] || file.originalname;
-      const category = categorizeFile(file.mimetype, file.originalname);
-      const fileType = getFileExtension(file.mimetype, file.originalname);
       const serverHash = computeHash(file.buffer);
 
-      let stampId;
-      let exists = true;
-      while (exists) {
-        stampId = generateStampId();
-        exists = await prisma.stamp.findUnique({ where: { id: stampId } });
+      const duplicate = await findGlobalDuplicate(file, serverHash);
+      if (duplicate) {
+        results.push({
+          stampId: null, title,
+          category: categorizeFile(file.mimetype, file.originalname),
+          fileType: getFileExtension(file.mimetype, file.originalname),
+          skipped: true,
+          reason: 'duplicate',
+          existingStampId: duplicate.existingStampId,
+          registeredBy: duplicate.registeredBy,
+          matchType: duplicate.matchType,
+        });
+        continue;
       }
 
-      const uploadOptions = {
-        folder: `proofstamp/${category}`,
-        public_id: stampId + '-original',
-        resource_type: category === 'image' ? 'image' : 'raw',
-      };
-      const originalUpload = await uploadBuffer(file.buffer, uploadOptions);
+      try {
+        const { stamp, stampedBuffer, isImage, category } = await stampFile(
+          file, passportRecord, privateKey, title, null, license, lastStamp
+        );
 
-      const passportRecord = await prisma.passport.findUnique({
-        where: { userId: req.user.userId },
-      });
-
-      const signData = `${stampId}|${passportRecord.id}|${serverHash}|${new Date().toISOString()}`;
-      const sign = crypto.createSign('SHA256');
-      sign.update(signData);
-      const signature = sign.sign(passportRecord.privateKey, 'base64');
-
-      const stamp = await prisma.stamp.create({
-        data: {
-          id: stampId,
-          passportId: passportRecord.id,
-          originalHash: serverHash,
+        lastStamp = { id: stamp.id, proofChain: stamp.proofChain };
+        results.push({ stampId: stamp.id, title, category: stamp.category, fileType: stamp.fileType });
+        backgroundJobs.push(() =>
+          runBackgroundTasks(stamp.id, file, stampedBuffer, passportRecord, isImage, category, user)
+        );
+      } catch (err) {
+        results.push({
+          stampId: null,
           title,
-          license: license || 'All Rights Reserved',
-          category,
-          fileType,
-          fileName: file.originalname,
-          fileSize: file.buffer.length,
-          originalFileUrl: originalUpload.secure_url,
-          thumbnailUrl: category === 'image' ? getThumbnailUrl(originalUpload.secure_url) : null,
-          signature,
-        },
-      });
-
-      results.push({ stampId: stamp.id, title, category, fileType });
+          skipped: true,
+          reason: err.message?.includes('TSA') || err.message?.includes('imprint') ? 'tsa_failed' : 'error',
+          error: err.message,
+        });
+      }
     }
 
-    res.status(201).json({ stamps: results, count: results.length });
+    res.status(201).json({ stamps: results, count: results.filter(r => !r.skipped).length });
+
+    for (const job of backgroundJobs) {
+      job();
+    }
   } catch (error) {
     console.error('Error bulk stamping:', error);
     res.status(500).json({ error: 'Bulk stamp failed' });
@@ -428,7 +689,6 @@ router.get('/:stampId', async (req, res) => {
   }
 });
 
-// Export proof bundle metadata
 router.get('/:stampId/proof', async (req, res) => {
   try {
     const stamp = await prisma.stamp.findUnique({
@@ -437,18 +697,50 @@ router.get('/:stampId/proof', async (req, res) => {
         passport: {
           select: { id: true, username: true, displayName: true, publicKey: true },
         },
+        stampAnchors: {
+          include: { anchor: true },
+        },
       },
     });
 
     if (!stamp) return res.status(404).json({ error: 'Stamp not found' });
 
+    const baseUrl = getBaseUrl();
+    const auditExport = await exportAuditChain(stamp.id);
+
+    await logAudit(req, {
+      action: 'PROOF_BUNDLE_VIEWED',
+      stampId: stamp.id,
+      passportId: stamp.passportId,
+    });
+
+    let creatorAttestation = null;
+    if (stamp.creatorAttestationSignature && stamp.creatorAttestationPayload) {
+      creatorAttestation = {
+        name: stamp.creatorAttestationName,
+        at: stamp.creatorAttestationAt?.toISOString(),
+        payload: stamp.creatorAttestationPayload,
+        signature: stamp.creatorAttestationSignature,
+        algorithm: 'RSA-SHA256',
+        verified: verifyAttestation(
+          stamp.passport.publicKey,
+          stamp.creatorAttestationPayload,
+          stamp.creatorAttestationSignature
+        ),
+        declarationUrl: stamp.creatorDeclarationUrl,
+      };
+    } else if (stamp.creatorAttestationAt) {
+      creatorAttestation = { legacy: true, reattestRequired: true };
+    }
+
     const proofBundle = {
-      version: '1.0',
+      version: '3.0',
       stampId: stamp.id,
       creator: {
         passportId: stamp.passport.id,
         username: stamp.passport.username,
         displayName: stamp.passport.displayName,
+        attestation: creatorAttestation,
       },
       file: {
         name: stamp.fileName,
@@ -463,11 +755,44 @@ router.get('/:stampId/proof', async (req, res) => {
         timestamp: stamp.createdAt.toISOString(),
         proofChain: stamp.proofChain ? JSON.parse(stamp.proofChain) : null,
         perceptualHashes: stamp.pHash ? { pHash: stamp.pHash, dHash: stamp.dHash } : null,
+        audioFingerprint: stamp.audioFingerprint ? JSON.parse(stamp.audioFingerprint) : null,
+        videoFingerprint: stamp.videoFingerprint ? JSON.parse(stamp.videoFingerprint) : null,
       },
+      trustedTimestamp: stamp.tsaToken ? {
+        tsaUrl: stamp.tsaUrl,
+        tsaTier: stamp.tsaTier,
+        tsaProvider: stamp.tsaProviderName,
+        timestamp: stamp.tsaTimestamp?.toISOString() || null,
+        verifyStatus: stamp.tsaVerifyStatus,
+        tsaChain: stamp.tsaChainJson ? JSON.parse(stamp.tsaChainJson) : null,
+        token: Buffer.isBuffer(stamp.tsaToken) ? stamp.tsaToken.toString('base64') : stamp.tsaToken,
+        verifyUrl: `${baseUrl}/tsa/verify/${stamp.id}`,
+        tokenDownloadUrl: `${baseUrl}/tsa/token/${stamp.id}`,
+        display: getTsaDisplayMeta(),
+      } : null,
+      keyCustody: {
+        algorithm: 'RSA-2048',
+        publicKeyOnRecord: true,
+        privateKeyStorage: 'aes-256-gcm-encrypted-at-rest',
+        exportableByCreator: true,
+        exportEndpoint: `${baseUrl}/passport/me/export-private-key`,
+      },
+      systemAttestation: SYSTEM_ATTESTATION,
+      legalArtifacts: {
+        section63SystemCertificateUrl: stamp.evidenceCertificateUrl,
+        creatorDeclarationUrl: stamp.creatorDeclarationUrl,
+        counselPacketUrl: `${baseUrl}/legal/${stamp.id}/litigation-pack`,
+        attestUrl: `${baseUrl}/legal/${stamp.id}/attest`,
+        artifactsCatalogUrl: `${baseUrl}/legal/${stamp.id}/artifacts`,
+        requiresCreatorAttestation: !hasCreatorAttestation(stamp),
+      },
+      blockchainAnchors: formatAnchorsForProof(stamp.stampAnchors),
+      auditChainHeadHash: auditExport.verification.headHash,
+      auditChainValid: auditExport.verification.valid,
+      verifyInstructions: buildVerifyInstructions(baseUrl, stamp.id),
       license: stamp.license,
       verification: {
         url: `${process.env.CLIENT_URL}/verify?id=${stamp.id}`,
-        instructions: 'Upload the file to the verification URL or use the stamp ID to verify ownership.',
       },
       aiNotice: `This work is registered and protected. Use for AI/ML training without explicit permission from @${stamp.passport.username} is prohibited under ${stamp.license}.`,
     };
@@ -479,7 +804,7 @@ router.get('/:stampId/proof', async (req, res) => {
   }
 });
 
-router.delete('/:stampId', authMiddleware, async (req, res) => {
+router.delete('/:stampId', authOrApiKey, async (req, res) => {
   try {
     const stamp = await prisma.stamp.findUnique({
       where: { id: req.params.stampId },

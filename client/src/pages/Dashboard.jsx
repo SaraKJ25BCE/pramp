@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   Stamp, FileCheck, Plus, Calendar, Shield, FileImage, Music, Video,
-  Code, File, Package, Type, Lock, Fingerprint, Download, Trash2
+  Code, File, Package, Type, Lock, Download, Trash2, AlertTriangle, Scale
 } from 'lucide-react';
+import { downloadCounselPacket, legalStatusBadges, MARKETING } from '@/lib/legalProof';
+import { useToast } from '@/components/ui/toast';
 
 function getCategoryIcon(category) {
   const map = { image: FileImage, audio: Music, video: Video, code: Code, archive: Package, font: Type, design: FileImage };
@@ -17,19 +19,31 @@ function getCategoryIcon(category) {
 }
 
 export default function Dashboard() {
+  const { toast } = useToast();
   const { user, passport } = useAuth();
   const [stamps, setStamps] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [draftTakedowns, setDraftTakedowns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(null);
+  const [usage, setUsage] = useState(null);
 
   useEffect(() => {
-    fetchStamps();
+    fetchAll();
   }, []);
 
-  async function fetchStamps() {
+  async function fetchAll() {
     try {
-      const res = await api.get('/passport/me');
-      setStamps(res.data.passport.stamps || []);
+      const [passportRes, alertRes, tdRes, usageRes] = await Promise.all([
+        api.get('/passport/me'),
+        api.get('/monitor/alerts').catch(() => ({ data: { alerts: [] } })),
+        api.get('/takedowns').catch(() => ({ data: { takedowns: [] } })),
+        api.get('/passport/me/usage').catch(() => ({ data: null })),
+      ]);
+      setStamps(passportRes.data.passport.stamps || []);
+      setUsage(usageRes.data);
+      setAlerts((alertRes.data.alerts || []).filter((a) => a.status === 'new'));
+      setDraftTakedowns((tdRes.data.takedowns || []).filter((t) => t.status === 'draft'));
     } catch (err) {
       console.error(err);
     } finally {
@@ -46,7 +60,7 @@ export default function Dashboard() {
       await api.delete(`/stamps/${stampId}`);
       setStamps((prev) => prev.filter((s) => s.id !== stampId));
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete');
+      toast(err.response?.data?.error || 'Failed to delete', 'error');
     } finally {
       setDeleting(null);
     }
@@ -93,6 +107,15 @@ export default function Dashboard() {
                 <p className="text-blue-200 text-sm mt-1">
                   Passport: {passport?.id}
                 </p>
+                <p className="text-blue-100/80 text-xs mt-2 max-w-md">
+                  Your signing key is stored server-side (encrypted per account) for convenience. For maximum security, browser-side signing is on our roadmap.
+                </p>
+                {usage && typeof usage.stampsRemaining === 'number' && (
+                  <p className="text-blue-100 text-sm mt-2">
+                    {usage.stampsRemaining} stamps remaining this month
+                    {usage.tsaCallsThisMonth != null ? ` · ${usage.tsaCallsThisMonth} TSA calls` : ''}
+                  </p>
+                )}
               </div>
               <div className="ml-auto text-right">
                 <div className="text-4xl font-bold">{stamps.length}</div>
@@ -135,7 +158,46 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Actions */}
+        {(alerts.length > 0 || draftTakedowns.length > 0) && (
+          <Card className="border-amber-200 bg-amber-50/50">
+            <CardContent className="p-6">
+              <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+                Needs action
+              </h2>
+              {alerts.length > 0 && (
+                <div className="space-y-2 mb-4">
+                  <p className="text-sm text-muted-foreground">{alerts.length} new theft alert(s)</p>
+                  {alerts.slice(0, 5).map((alert) => (
+                    <div key={alert.id} className="flex flex-wrap items-center justify-between gap-2 bg-white rounded-lg border p-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">{alert.stamp?.title || alert.stampId}</p>
+                        <a href={alert.sourceUrl} target="_blank" rel="noreferrer" className="text-xs text-indigo-600 truncate block max-w-md">
+                          {alert.sourceUrl}
+                        </a>
+                      </div>
+                      <Button size="sm" asChild>
+                        <Link to={`/takedowns?stampId=${alert.stampId}&url=${encodeURIComponent(alert.sourceUrl)}&alertId=${alert.id}`}>
+                          File takedown
+                        </Link>
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {draftTakedowns.length > 0 && (
+                <p className="text-sm">
+                  {draftTakedowns.length} draft takedown(s) —{' '}
+                  <Link to="/takedowns" className="text-indigo-600 hover:underline">continue filing</Link>
+                </p>
+              )}
+              <Button variant="outline" size="sm" className="mt-3" asChild>
+                <Link to="/monitor">View all alerts</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="flex gap-4 flex-wrap">
           <Button asChild size="lg">
             <Link to="/stamp">
@@ -209,12 +271,44 @@ export default function Dashboard() {
                               {new Date(stamp.createdAt).toLocaleDateString()}
                             </span>
                           </div>
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            {legalStatusBadges(stamp).map((b) => (
+                              <Badge key={b.label} variant="secondary" className="text-xs">{b.label}</Badge>
+                            ))}
+                          </div>
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-1 text-xs text-green-600">
-                              <Lock className="h-3 w-3" />
-                              <span>Protected</span>
-                            </div>
                             <div className="flex items-center gap-1">
+                              {stamp.creatorAttestationSignature ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    downloadCounselPacket(stamp.id).catch((e) => {
+                                      const msg = e.message || '';
+                                      if (msg.includes('REATTEST') || msg.includes('attestation')) {
+                                        toast('Re-attestation required: sign your declaration again.', 'warning');
+                                        window.location.href = `/stamp?sign=${stamp.id}`;
+                                      } else {
+                                        toast(msg || 'Download failed', 'error');
+                                      }
+                                    });
+                                  }}
+                                  className="p-1.5 rounded-md hover:bg-indigo-50 text-indigo-600"
+                                  title={MARKETING.counselPacketName}
+                                >
+                                  <Scale className="h-3.5 w-3.5" />
+                                </button>
+                              ) : (
+                                <Link
+                                  to={`/stamp?sign=${stamp.id}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="p-1.5 rounded-md hover:bg-amber-50 text-amber-700"
+                                  title="Sign your creator declaration first"
+                                >
+                                  <Scale className="h-3.5 w-3.5" />
+                                </Link>
+                              )}
                               <button
                                 onClick={(e) => handleDownload(stamp, e)}
                                 className="p-1.5 rounded-md hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors"

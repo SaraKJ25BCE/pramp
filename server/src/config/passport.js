@@ -1,9 +1,9 @@
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const crypto = require('crypto');
-const { PrismaClient } = require('@prisma/client');
-
-const prisma = new PrismaClient();
+const prisma = require('./prisma');
+const { withDbRetry } = require('./prisma');
+const { encryptPrivateKey } = require('../utils/crypto');
 
 function generatePassportId() {
   const year = new Date().getFullYear();
@@ -24,38 +24,77 @@ passport.use(
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
-        let user = await prisma.user.findUnique({
-          where: { googleId: profile.id },
-          include: { passport: true },
-        });
+        const user = await withDbRetry(async () => {
+          let existing = await prisma.user.findUnique({
+            where: { googleId: profile.id },
+            include: { passport: true },
+          });
 
-        if (!user) {
+          if (existing) return existing;
+
+          const email = profile.emails[0].value.toLowerCase();
+          const byEmail = await prisma.user.findUnique({
+            where: { email },
+            include: { passport: true },
+          });
+
+          if (byEmail) {
+            return prisma.user.update({
+              where: { id: byEmail.id },
+              data: {
+                googleId: profile.id,
+                emailVerified: true,
+                avatarUrl: profile.photos?.[0]?.value || byEmail.avatarUrl,
+              },
+              include: { passport: true },
+            });
+          }
+
           const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
             modulusLength: 2048,
             publicKeyEncoding: { type: 'spki', format: 'pem' },
             privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
           });
 
-          user = await prisma.user.create({
+          const passportId = generatePassportId();
+          const encryptedPrivateKey = encryptPrivateKey(privateKey, {
+            userId: 'pending',
+            passportId,
+          });
+
+          const created = await prisma.user.create({
             data: {
               googleId: profile.id,
-              email: profile.emails[0].value,
+              email,
+              emailVerified: true,
               avatarUrl: profile.photos?.[0]?.value || null,
               passport: {
                 create: {
-                  id: generatePassportId(),
+                  id: passportId,
                   displayName: profile.displayName,
                   publicKey,
-                  privateKey,
+                  privateKey: encryptedPrivateKey,
                 },
               },
             },
             include: { passport: true },
           });
-        }
+
+          const reEncrypted = encryptPrivateKey(privateKey, {
+            userId: created.id,
+            passportId: created.passport.id,
+          });
+          await prisma.passport.update({
+            where: { id: created.passport.id },
+            data: { privateKey: reEncrypted },
+          });
+          created.passport.privateKey = reEncrypted;
+          return created;
+        });
 
         done(null, user);
       } catch (error) {
+        console.error('Google OAuth DB error:', error.message);
         done(error, null);
       }
     }

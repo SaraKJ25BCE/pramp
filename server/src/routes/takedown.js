@@ -1,11 +1,33 @@
 const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const prisma = require('../config/prisma');
+const { notifyWebhook } = require('../services/webhooks');
+const {
+  autoSubmitTakedown,
+  calculateResponseDeadline,
+  getAllPlatforms,
+  getPlatformConfig,
+} = require('../services/takedownAutomation');
+const { startTakedownEscalationJob } = require('../jobs/takedownEscalation');
+const { BSA_FRAME } = require('../content/legalCopy');
 
 const router = express.Router();
 
+function getServerUrl() {
+  return process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3001}`;
+}
+
 function generateDmcaLetter(stamp, passport, infringingUrl, platform) {
+  const baseUrl = getServerUrl();
+  const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const tsaLine = stamp.tsaTimestamp
+    ? `- RFC 3161 Trusted Timestamp: ${new Date(stamp.tsaTimestamp).toISOString()} (${stamp.tsaUrl || 'TSA'}) [verify: ${baseUrl}/tsa/verify/${stamp.id}]`
+    : '';
+  const s63Line = stamp.evidenceCertificateUrl
+    ? `- ${BSA_FRAME.shortLabel}: ${stamp.evidenceCertificateUrl}`
+    : `- ${BSA_FRAME.shortLabel}: ${baseUrl}/legal/${stamp.id}/system-certificate`;
+
   return `DMCA TAKEDOWN NOTICE
 Date: ${date}
 
@@ -32,8 +54,18 @@ This work was registered with ProofStamp on ${new Date(stamp.createdAt).toISOStr
 - SHA-256 hash: ${stamp.originalHash}
 - Perceptual fingerprint (pHash): ${stamp.pHash || 'N/A'}
 - DWT-DCT frequency-domain watermark embedded in the image
+${tsaLine}
+${s63Line}
+${stamp.c2paManifestUrl ? '- C2PA Content Credentials manifest embedded' : ''}
 
-This evidence constitutes cryptographic proof that I possessed this work at the stated time and is computationally infeasible to forge.
+PROOF ARTIFACTS (attached / available for download):
+- Proof bundle (JSON): ${baseUrl}/stamps/${stamp.id}/proof
+- Counsel Evidence Packet (ZIP): ${baseUrl}/legal/${stamp.id}/litigation-pack (authenticated; requires creator attestation)
+- Public verification: ${clientUrl}/verify?id=${stamp.id}
+- TSA token: ${baseUrl}/tsa/token/${stamp.id}
+- Artifacts catalog: ${baseUrl}/legal/${stamp.id}/artifacts
+
+This evidence constitutes cryptographic proof that I possessed this work at the stated time. Present with counsel as appropriate under applicable law.
 
 STATEMENTS:
 1. I have a good faith belief that the use of the material in the manner complained of is not authorized by the copyright owner, its agent, or the law.
@@ -54,18 +86,6 @@ Digital Signature: ${stamp.signature.substring(0, 64)}...
 This notice is sent pursuant to the Digital Millennium Copyright Act (17 U.S.C. § 512).`;
 }
 
-const PLATFORM_INFO = {
-  instagram: { name: 'Instagram', reportUrl: 'https://help.instagram.com/contact/552695131608132', method: 'Form submission' },
-  twitter: { name: 'Twitter/X', reportUrl: 'https://help.twitter.com/forms/dmca', method: 'Form submission' },
-  youtube: { name: 'YouTube', reportUrl: 'https://www.youtube.com/copyright_complaint_page', method: 'Form submission' },
-  pinterest: { name: 'Pinterest', reportUrl: 'https://www.pinterest.com/about/copyright/dmca-pin/', method: 'Form submission' },
-  facebook: { name: 'Facebook', reportUrl: 'https://www.facebook.com/help/contact/208282075858952', method: 'Form submission' },
-  tiktok: { name: 'TikTok', reportUrl: 'https://www.tiktok.com/legal/report/Copyright', method: 'Form submission' },
-  behance: { name: 'Behance', reportUrl: 'https://www.behance.net/misc/dmca', method: 'Email' },
-  deviantart: { name: 'DeviantArt', reportUrl: 'https://www.deviantart.com/about/policy/copyright/', method: 'Form submission' },
-  other: { name: 'Other', reportUrl: null, method: 'Email to site owner' },
-};
-
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const passport = await prisma.passport.findUnique({ where: { userId: req.user.userId } });
@@ -83,8 +103,13 @@ router.get('/', authMiddleware, async (req, res) => {
       total: takedowns.length,
       draft: takedowns.filter(t => t.status === 'draft').length,
       sent: takedowns.filter(t => t.status === 'sent').length,
+      acknowledged: takedowns.filter(t => t.status === 'acknowledged').length,
       resolved: takedowns.filter(t => t.status === 'resolved').length,
       rejected: takedowns.filter(t => t.status === 'rejected').length,
+      overdue: takedowns.filter(t =>
+        t.status === 'sent' && t.responseDeadline && new Date(t.responseDeadline) < new Date()
+      ).length,
+      autoSubmitted: takedowns.filter(t => t.autoSubmitted).length,
     };
 
     res.json({ takedowns, stats });
@@ -96,7 +121,7 @@ router.get('/', authMiddleware, async (req, res) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { stampId, infringingUrl, platform, alertId } = req.body;
+    const { stampId, infringingUrl, platform, alertId, autoSubmit } = req.body;
 
     if (!stampId || !infringingUrl || !platform) {
       return res.status(400).json({ error: 'stampId, infringingUrl, and platform are required' });
@@ -109,7 +134,8 @@ router.post('/', authMiddleware, async (req, res) => {
     if (!stamp) return res.status(404).json({ error: 'Stamp not found' });
     if (stamp.passportId !== passport.id) return res.status(403).json({ error: 'Not your stamp' });
 
-    const dmcaLetter = generateDmcaLetter(stamp, passport, infringingUrl, PLATFORM_INFO[platform]?.name || platform);
+    const platformConfig = getPlatformConfig(platform);
+    const dmcaLetter = generateDmcaLetter(stamp, passport, infringingUrl, platformConfig.name);
 
     const takedown = await prisma.takedown.create({
       data: {
@@ -120,6 +146,7 @@ router.post('/', authMiddleware, async (req, res) => {
         infringingUrl,
         status: 'draft',
         dmcaLetter,
+        submissionMethod: platformConfig.method,
       },
     });
 
@@ -130,9 +157,30 @@ router.post('/', authMiddleware, async (req, res) => {
       });
     }
 
+    // Auto-submit if requested and platform supports it
+    let submissionResult = null;
+    if (autoSubmit) {
+      submissionResult = await autoSubmitTakedown(takedown, stamp);
+
+      if (submissionResult.submitted) {
+        const responseDeadline = calculateResponseDeadline(platform);
+        await prisma.takedown.update({
+          where: { id: takedown.id },
+          data: {
+            status: 'sent',
+            autoSubmitted: true,
+            filedAt: new Date(),
+            responseDeadline,
+            externalTicketId: submissionResult.details?.messageId || null,
+          },
+        });
+      }
+    }
+
     res.status(201).json({
-      takedown,
-      platformInfo: PLATFORM_INFO[platform] || PLATFORM_INFO.other,
+      takedown: await prisma.takedown.findUnique({ where: { id: takedown.id } }),
+      platformInfo: platformConfig,
+      submissionResult,
     });
   } catch (error) {
     console.error('Error creating takedown:', error);
@@ -140,9 +188,49 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
+router.post('/:takedownId/submit', authMiddleware, async (req, res) => {
+  try {
+    const passport = await prisma.passport.findUnique({ where: { userId: req.user.userId } });
+    const takedown = await prisma.takedown.findUnique({
+      where: { id: req.params.takedownId },
+      include: { stamp: true },
+    });
+
+    if (!takedown) return res.status(404).json({ error: 'Takedown not found' });
+    if (takedown.passportId !== passport.id) return res.status(403).json({ error: 'Not authorized' });
+    if (takedown.status !== 'draft') {
+      return res.status(400).json({ error: 'Takedown has already been submitted' });
+    }
+
+    const submissionResult = await autoSubmitTakedown(takedown, takedown.stamp);
+
+    if (submissionResult.submitted) {
+      const responseDeadline = calculateResponseDeadline(takedown.platform);
+      await prisma.takedown.update({
+        where: { id: takedown.id },
+        data: {
+          status: 'sent',
+          autoSubmitted: true,
+          filedAt: new Date(),
+          responseDeadline,
+          externalTicketId: submissionResult.details?.messageId || null,
+        },
+      });
+    }
+
+    res.json({
+      takedown: await prisma.takedown.findUnique({ where: { id: takedown.id } }),
+      submissionResult,
+    });
+  } catch (error) {
+    console.error('Error submitting takedown:', error);
+    res.status(500).json({ error: 'Failed to submit takedown' });
+  }
+});
+
 router.patch('/:takedownId/status', authMiddleware, async (req, res) => {
   try {
-    const { status, notes } = req.body;
+    const { status, notes, externalTicketId } = req.body;
     const validStatuses = ['draft', 'sent', 'acknowledged', 'resolved', 'rejected'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ error: `Status must be one of: ${validStatuses.join(', ')}` });
@@ -154,13 +242,30 @@ router.patch('/:takedownId/status', authMiddleware, async (req, res) => {
     if (takedown.passportId !== passport.id) return res.status(403).json({ error: 'Not authorized' });
 
     const updateData = { status };
-    if (status === 'sent') updateData.filedAt = new Date();
-    if (status === 'resolved' || status === 'rejected') updateData.resolvedAt = new Date();
+
+    if (status === 'sent' && !takedown.filedAt) {
+      updateData.filedAt = new Date();
+      updateData.responseDeadline = calculateResponseDeadline(takedown.platform);
+    }
+    if (status === 'resolved' || status === 'rejected') {
+      updateData.resolvedAt = new Date();
+      updateData.resolution = status;
+    }
     if (notes) updateData.notes = notes;
+    if (externalTicketId) updateData.externalTicketId = externalTicketId;
 
     const updated = await prisma.takedown.update({
       where: { id: req.params.takedownId },
       data: updateData,
+    });
+
+    setImmediate(() => {
+      notifyWebhook(passport.id, 'takedown.status', {
+        takedownId: updated.id,
+        stampId: updated.stampId,
+        platform: updated.platform,
+        status: updated.status,
+      });
     });
 
     res.json({ takedown: updated });
@@ -171,7 +276,10 @@ router.patch('/:takedownId/status', authMiddleware, async (req, res) => {
 });
 
 router.get('/platforms', (req, res) => {
-  res.json({ platforms: PLATFORM_INFO });
+  res.json({ platforms: getAllPlatforms() });
 });
+
+// Start the escalation monitoring job
+startTakedownEscalationJob();
 
 module.exports = router;
