@@ -6,10 +6,14 @@ const { PDFDocument, rgb, StandardFonts } = require('pdf-lib');
 const QRCode = require('qrcode');
 const authOrApiKey = require('../middleware/authOrApiKey');
 const upload = require('../middleware/upload');
+const { validateUploadedMagic } = require('../middleware/upload');
+const { sanitizePassport } = require('../utils/sanitizePassport');
+const { isCloudinaryUrl } = require('../utils/cdn');
+const { notifyWebhook } = require('../services/webhooks');
 const prisma = require('../config/prisma');
 const { uploadBuffer, getThumbnailUrl } = require('../config/cloudinary');
 const { decryptPrivateKey, computeHash, signData } = require('../utils/crypto');
-const { enforceStampQuota } = require('../middleware/rateLimiter');
+const { enforceStampQuota, stampCreatePerUserLimiter } = require('../middleware/rateLimiter');
 const { findGlobalDuplicate } = require('../services/duplicateCheck');
 const { getTimestampToken, verifyTimestampTokenFull } = require('../services/timestamping');
 const {
@@ -35,20 +39,14 @@ function getBaseUrl() {
   return process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3001}`;
 }
 
-async function generateUniqueStampId() {
+function generateStampId() {
   const year = new Date().getFullYear();
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let stampId;
-  let exists = true;
-  while (exists) {
-    let random = '';
-    for (let i = 0; i < 5; i++) {
-      random += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    stampId = `PS-${year}-${random}`;
-    exists = await prisma.stamp.findUnique({ where: { id: stampId } });
+  let random = '';
+  for (let i = 0; i < 5; i++) {
+    random += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return stampId;
+  return `PS-${year}-${random}`;
 }
 
 function categorizeFile(mimetype, filename) {
@@ -236,7 +234,10 @@ async function runBackgroundTasks(stampId, file, stampedBuffer, passportRecord, 
       cdnUpdate.thumbnailUrl = getThumbnailUrl(origCdn.secure_url);
     }
 
-    await prisma.stamp.update({ where: { id: stampId }, data: cdnUpdate });
+    await prisma.stamp.update({
+      where: { id: stampId },
+      data: { ...cdnUpdate, processing: false },
+    });
 
     const updatedStamp = await prisma.stamp.findUnique({ where: { id: stampId } });
     const certBuffer = await generateCertificatePdf(updatedStamp, passportRecord);
@@ -335,6 +336,12 @@ async function runBackgroundTasks(stampId, file, stampedBuffer, passportRecord, 
     }
   } catch (err) {
     console.error(`Background tasks failed for ${stampId}:`, err.message);
+    try {
+      await prisma.stamp.update({
+        where: { id: stampId },
+        data: { processing: false },
+      });
+    } catch (_) {}
   }
 }
 
@@ -345,8 +352,7 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
   const isAudio = category === 'audio';
   const isVideo = category === 'video';
   const serverHash = computeHash(file.buffer);
-
-  const stampId = await generateUniqueStampId();
+  let stampId = generateStampId();
 
   const fs = require('fs');
   const path = require('path');
@@ -458,37 +464,53 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
     tsaDisplay: getTsaDisplayMeta(),
   };
 
-  const stamp = await prisma.stamp.create({
-    data: {
-      id: stampId,
-      passportId: passportRecord.id,
-      originalHash: serverHash,
-      stampedHash,
-      pHash,
-      dHash,
-      audioFingerprint,
-      videoFingerprint,
-      title,
-      description: description || null,
-      license: license || 'All Rights Reserved',
-      category,
-      fileType,
-      fileName: file.originalname,
-      fileSize: file.buffer.length,
-      originalFileUrl,
-      stampedFileUrl,
-      thumbnailUrl,
-      signature,
-      metadataJson: JSON.stringify(metadata),
-      proofChain,
-      ...tsaFields,
-    },
-  });
+  const MAX_ID_RETRIES = 8;
+  let stamp;
+  let stampId;
+
+  for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt++) {
+    if (attempt > 0) {
+      stampId = generateStampId();
+    }
+    try {
+      stamp = await prisma.stamp.create({
+        data: {
+          id: stampId,
+          passportId: passportRecord.id,
+          originalHash: serverHash,
+          stampedHash,
+          pHash,
+          dHash,
+          audioFingerprint,
+          videoFingerprint,
+          title,
+          description: description || null,
+          license: license || 'All Rights Reserved',
+          category,
+          fileType,
+          fileName: file.originalname,
+          fileSize: file.buffer.length,
+          originalFileUrl,
+          stampedFileUrl,
+          thumbnailUrl,
+          signature,
+          metadataJson: JSON.stringify(metadata),
+          proofChain,
+          processing: true,
+          ...tsaFields,
+        },
+      });
+      break;
+    } catch (err) {
+      if (err.code === 'P2002' && attempt < MAX_ID_RETRIES - 1) continue;
+      throw err;
+    }
+  }
 
   return { stamp, stampedBuffer, isImage, category, serverHash };
 }
 
-router.post('/', authOrApiKey, enforceStampQuota, upload.single('file'), async (req, res) => {
+router.post('/', authOrApiKey, stampCreatePerUserLimiter, enforceStampQuota, upload.single('file'), validateUploadedMagic, async (req, res) => {
   try {
     const { title, description, license, clientHash } = req.body;
     const file = req.file;
@@ -562,7 +584,11 @@ router.post('/', authOrApiKey, enforceStampQuota, upload.single('file'), async (
         : null;
 
     res.status(201).json({
-      stamp,
+      stamp: {
+        ...stamp,
+        processing: true,
+        cdnReady: isCloudinaryUrl(stamp.originalFileUrl),
+      },
       verifyUrl: `${process.env.CLIENT_URL}/verify?id=${stamp.id}`,
       usage,
       legalProof: {
@@ -577,6 +603,14 @@ router.post('/', authOrApiKey, enforceStampQuota, upload.single('file'), async (
       },
     });
 
+    setImmediate(() => {
+      notifyWebhook(passportRecord.id, 'stamp.created', {
+        stampId: stamp.id,
+        title: stamp.title,
+        category: stamp.category,
+      });
+    });
+
     runBackgroundTasks(stamp.id, file, stampedBuffer, passportRecord, isImage, category, user);
   } catch (error) {
     console.error('Error creating stamp:', error);
@@ -584,7 +618,7 @@ router.post('/', authOrApiKey, enforceStampQuota, upload.single('file'), async (
   }
 });
 
-router.post('/bulk', authOrApiKey, enforceStampQuota, upload.array('files', 20), async (req, res) => {
+router.post('/bulk', authOrApiKey, stampCreatePerUserLimiter, enforceStampQuota, upload.array('files', 20), validateUploadedMagic, async (req, res) => {
   try {
     const { license, titles } = req.body;
     const files = req.files;
@@ -680,9 +714,14 @@ router.get('/:stampId', async (req, res) => {
     if (!stamp) return res.status(404).json({ error: 'Stamp not found' });
 
     const { passport: passportData, ...stampData } = stamp;
-    const { privateKey, ...safePassport } = passportData;
 
-    res.json({ stamp: stampData, passport: safePassport });
+    res.json({
+      stamp: {
+        ...stampData,
+        cdnReady: isCloudinaryUrl(stampData.originalFileUrl) && !stampData.processing,
+      },
+      passport: sanitizePassport(passportData),
+    });
   } catch (error) {
     console.error('Error fetching stamp:', error);
     res.status(500).json({ error: 'Internal server error' });

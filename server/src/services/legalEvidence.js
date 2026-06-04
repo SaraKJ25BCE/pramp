@@ -342,7 +342,7 @@ function buildArtifactsList(stamp, passport, baseUrl) {
         claim: 'Electronic record — system output (BSA 2023 s.63)',
         artifact: BSA_FRAME.shortLabel,
         available: hasSystemCert,
-        url: has65b ? stamp.evidenceCertificateUrl : `${baseUrl}/legal/${stamp.id}/system-certificate`,
+        url: hasSystemCert ? stamp.evidenceCertificateUrl : `${baseUrl}/legal/${stamp.id}/system-certificate`,
       },
       {
         claim: 'Creator authorship and rights',

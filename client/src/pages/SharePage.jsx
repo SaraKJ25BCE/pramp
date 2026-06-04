@@ -75,7 +75,7 @@ export default function SharePage() {
       setVersionFile(null);
       loadStamp();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to upload version');
+      toast(err.response?.data?.error || 'Failed to upload version', 'error');
     } finally {
       setUploading(false);
     }
@@ -103,6 +103,8 @@ export default function SharePage() {
 
   const shareUrl = `${window.location.origin}/p/${stamp.id}`;
   const apiUrl = import.meta.env.VITE_API_URL;
+  const embedUrl = `${apiUrl}/embed/badge/${stamp.id}`;
+  const embedSnippet = `<iframe src="${embedUrl}" width="240" height="96" frameborder="0" title="ProofStamp verification badge" loading="lazy"></iframe>`;
   const isOwner = !!(stamp?.passportId && authPassport?.id === stamp.passportId);
   const attested = !!(stamp.creatorAttestationAt && stamp.creatorAttestationSignature);
   const systemCertUrl =
@@ -237,7 +239,7 @@ export default function SharePage() {
                   onClick={handleCounselDownload}
                 >
                   <Scale className="h-4 w-4 mr-2" />
-                  {MARKETING.downloadCounselPacketCta}
+                  Download Evidence Package
                 </Button>
               ) : isOwner ? (
                 <Button className="bg-indigo-700 hover:bg-indigo-800" asChild>
@@ -389,6 +391,26 @@ export default function SharePage() {
                 )}
               </div>
             )}
+
+            <div className="mt-8 pt-6 border-t border-gray-100">
+              <h3 className="font-semibold text-gray-900 text-sm mb-2">Embed verification badge</h3>
+              <p className="text-xs text-gray-500 mb-2">
+                Add this to your portfolio — viewers can click through to verify authenticity.
+              </p>
+              <pre className="text-xs bg-gray-50 border rounded-lg p-3 overflow-x-auto">{embedSnippet}</pre>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => {
+                  copyToClipboard(embedSnippet, 'embed');
+                  toast('Embed code copied', 'success');
+                }}
+              >
+                <Copy className="h-4 w-4 mr-1.5" />
+                {copied === 'embed' ? 'Copied!' : 'Copy embed code'}
+              </Button>
+            </div>
 
             <div className="mt-4 flex flex-wrap gap-2 justify-center text-sm">
               <Button variant="ghost" size="sm" onClick={() => copyToClipboard(shareUrl, 'link')}>

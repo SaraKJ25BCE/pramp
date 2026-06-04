@@ -4,7 +4,13 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const passport = require('passport');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
+
+const uploadsRoot = path.join(__dirname, '../uploads');
+for (const sub of ['originals', 'stamped', 'certificates']) {
+  fs.mkdirSync(path.join(uploadsRoot, sub), { recursive: true });
+}
 
 require('./config/passport');
 
@@ -24,6 +30,7 @@ const apiVerifyRoutes = require('./routes/apiVerify');
 const embedBadgeRoutes = require('./routes/embedBadge');
 const { logFairUseStartup } = require('./config/fairUse');
 const { startTsaRetryJob } = require('./jobs/tsaRetry');
+const { startWebhookRetryJob } = require('./jobs/webhookRetry');
 const { startBlockchainAnchorJob } = require('./jobs/blockchainAnchor');
 const { startOtsUpgradeJob } = require('./jobs/otsUpgrade');
 const { startAuditHeadGithubJob } = require('./jobs/auditHeadGithub');
@@ -33,8 +40,8 @@ const { getPlatformPublicKeyPem } = require('./services/platformSigning');
 const {
   globalLimiter,
   stampRouteLimiter,
+  stampCreatePerUserLimiter,
   verifyLimiter,
-  authMeLimiter,
 } = require('./middleware/rateLimiter');
 
 const app = express();
@@ -61,8 +68,11 @@ app.use('/registry', cors());
 app.use('/embed', cors({ origin: '*' }), embedBadgeRoutes);
 app.use('/uploads', cors(), (req, res, next) => {
   res.setHeader('X-Robots-Tag', 'noai, noimageai');
+  res.setHeader('Content-Disposition', 'attachment');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   next();
-}, express.static(path.join(__dirname, '../uploads')));
+}, express.static(uploadsRoot));
 
 app.use('/auth', authRoutes);
 app.use('/passport', passportRoutes);
@@ -148,6 +158,7 @@ connectDatabase()
     logFairUseStartup();
     startScheduledScanner();
     startTsaRetryJob();
+    startWebhookRetryJob();
     startAuditHeadGithubJob();
     if (process.env.BLOCKCHAIN_ANCHOR_DISABLED !== 'true') {
       startBlockchainAnchorJob();

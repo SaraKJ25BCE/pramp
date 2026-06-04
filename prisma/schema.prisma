@@ -32,19 +32,20 @@ model EmailVerification {
 }
 
 model Passport {
-  id          String   @id
-  userId      String   @unique
-  username    String?  @unique
-  displayName String
-  publicKey   String   @db.Text
-  privateKey  String   @db.Text
-  webhookUrl  String?  @db.Text
-  createdAt   DateTime @default(now())
-  user        User     @relation(fields: [userId], references: [id])
-  stamps      Stamp[]
-  monitors    Monitor[]
-  takedowns   Takedown[]
-  apiKeys     ApiKey[]
+  id               String            @id
+  userId           String            @unique
+  username         String?           @unique
+  displayName      String
+  publicKey        String            @db.Text
+  privateKey       String            @db.Text
+  webhookUrl       String?           @db.Text
+  createdAt        DateTime          @default(now())
+  user             User              @relation(fields: [userId], references: [id])
+  stamps           Stamp[]
+  monitors         Monitor[]
+  takedowns        Takedown[]
+  apiKeys          ApiKey[]
+  webhookEndpoints WebhookEndpoint[]
 }
 
 model ApiKey {
@@ -103,6 +104,7 @@ model Stamp {
   creatorAttestationCountry   String?
   creatorDeclarationUrl       String?
   tsaStatus                   String?  @default("pending")
+  processing                  Boolean  @default(true)
   aiOptOut               Boolean  @default(true)
   monitorEnabled   Boolean  @default(false)
   createdAt        DateTime @default(now())
@@ -255,6 +257,36 @@ model UserNotification {
   @@index([userId])
   @@index([userId, read])
   @@index([createdAt])
+}
+
+model WebhookEndpoint {
+  id         String            @id @default(cuid())
+  passportId String
+  url        String            @db.Text
+  secret     String
+  label      String?
+  enabled    Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  passport   Passport          @relation(fields: [passportId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([passportId])
+}
+
+model WebhookDelivery {
+  id          String          @id @default(cuid())
+  endpointId  String
+  event       String
+  payloadJson String          @db.Text
+  status      String          @default("pending")
+  attempts    Int             @default(0)
+  nextRetryAt DateTime?
+  lastError   String?         @db.Text
+  createdAt   DateTime        @default(now())
+  endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextRetryAt])
+  @@index([endpointId])
 }
 
 model AuditLog {

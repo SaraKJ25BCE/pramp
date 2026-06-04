@@ -54,9 +54,14 @@ export default function VerifyPage() {
     setError('');
     setResult(null);
     try {
-      const stampId = id || stampIdInput;
+      const stampId = (id || stampIdInput || '').trim();
       const match = stampId.match(/PS-\d{4}-[A-Z0-9]{5}/);
-      const cleanId = match ? match[0] : stampId;
+      const cleanId = match ? match[0] : null;
+      if (!cleanId) {
+        setError('Invalid stamp ID format. Expected PS-YYYY-XXXXX (e.g. PS-2026-A1B2C)');
+        setLoading(false);
+        return;
+      }
       const res = await api.get(`/verify/${cleanId}`);
       setResult(res.data);
     } catch (err) {

@@ -260,12 +260,16 @@ router.patch('/:takedownId/status', authMiddleware, async (req, res) => {
     });
 
     setImmediate(() => {
-      notifyWebhook(passport.id, 'takedown.status', {
+      const payload = {
         takedownId: updated.id,
         stampId: updated.stampId,
         platform: updated.platform,
         status: updated.status,
-      });
+      };
+      notifyWebhook(passport.id, 'takedown.status', payload);
+      if (status === 'resolved') {
+        notifyWebhook(passport.id, 'takedown.resolved', payload);
+      }
     });
 
     res.json({ takedown: updated });

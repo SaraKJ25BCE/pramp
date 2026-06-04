@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { downloadCounselPacket, legalStatusBadges, MARKETING } from '@/lib/legalProof';
 import { useToast } from '@/components/ui/toast';
+import DeveloperSettings from '@/components/DeveloperSettings';
 
 function getCategoryIcon(category) {
   const map = { image: FileImage, audio: Music, video: Video, code: Code, archive: Package, font: Type, design: FileImage };
@@ -212,6 +213,8 @@ export default function Dashboard() {
             </Link>
           </Button>
         </div>
+
+        <DeveloperSettings />
 
         {/* Protected Files */}
         <div>

@@ -10,6 +10,7 @@ import {
   FileWarning, Send, Copy, CheckCircle2, Clock, XCircle,
   Loader2, ExternalLink, AlertTriangle, ChevronDown, ChevronUp
 } from 'lucide-react';
+import { useToast } from '@/components/ui/toast';
 
 const STATUS_CONFIG = {
   draft: { label: 'Draft', color: 'bg-gray-100 text-gray-700', icon: FileWarning },
@@ -20,6 +21,7 @@ const STATUS_CONFIG = {
 };
 
 export default function TakedownPage() {
+  const { toast } = useToast();
   const [searchParams] = useSearchParams();
   const [takedowns, setTakedowns] = useState([]);
   const [stats, setStats] = useState(null);
@@ -78,7 +80,7 @@ export default function TakedownPage() {
       setFormUrl('');
       setFormPlatform('');
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to create takedown');
+      toast(err.response?.data?.error || 'Failed to create takedown', 'error');
     } finally {
       setSubmitting(false);
     }
@@ -89,7 +91,7 @@ export default function TakedownPage() {
       await api.patch(`/takedowns/${takedownId}/status`, { status });
       setTakedowns(prev => prev.map(t => t.id === takedownId ? { ...t, status } : t));
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to update');
+      toast(err.response?.data?.error || 'Failed to update', 'error');
     }
   }
 

@@ -7,6 +7,8 @@ const upload = require('../middleware/upload');
 const prisma = require('../config/prisma');
 const { computeHash, hammingDistance } = require('../utils/crypto');
 const { verifyStampSignature, verifyProofChain } = require('../services/stampVerify');
+const { isValidStampId } = require('../utils/stampId');
+const { sanitizePassport } = require('../utils/sanitizePassport');
 
 function cosineSimilarity(a, b) {
   if (!a || !b || a.length !== b.length || a.length === 0) return 0;
@@ -28,9 +30,7 @@ const PHASH_MEDIUM = 12;
 const PHASH_LOW = 18;
 
 function stripPrivateKey(passport) {
-  if (!passport) return passport;
-  const { privateKey, ...safe } = passport;
-  return safe;
+  return sanitizePassport(passport);
 }
 
 router.post('/file', upload.single('file'), async (req, res) => {
@@ -260,6 +260,16 @@ router.post('/file', upload.single('file'), async (req, res) => {
 
 router.get('/:stampId', async (req, res) => {
   try {
+    if (!isValidStampId(req.params.stampId)) {
+      return res.status(400).json({
+        error: 'Invalid stamp ID format. Expected PS-YYYY-XXXXX (e.g. PS-2026-A1B2C)',
+        outcome: 'C',
+        message: 'Invalid stamp ID format',
+        stamp: null,
+        passport: null,
+      });
+    }
+
     const stamp = await prisma.stamp.findUnique({
       where: { id: req.params.stampId },
       include: {

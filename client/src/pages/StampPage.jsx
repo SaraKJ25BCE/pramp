@@ -101,7 +101,8 @@ export default function StampPage() {
         const s = res.data.stamp;
         setPolledStamp(s);
         if (s.creatorAttestationAt) setAttested(true);
-        if (s.tsaVerifyStatus === 'valid' && s.evidenceCertificateUrl) {
+        const cdnReady = s.cdnReady || (!s.processing && /cloudinary/i.test(s.originalFileUrl || ''));
+        if (cdnReady && s.tsaVerifyStatus === 'valid' && s.evidenceCertificateUrl) {
           setLegalReady(true);
         }
       } catch (err) {
@@ -110,7 +111,7 @@ export default function StampPage() {
     };
 
     poll();
-    const interval = setInterval(poll, 8000);
+    const interval = setInterval(poll, 2000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -304,6 +305,14 @@ export default function StampPage() {
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Category</span>
                   <Badge variant="secondary">{result.stamp.category}</Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-muted-foreground">CDN upload</span>
+                  <Badge variant={displayStamp?.cdnReady || !displayStamp?.processing ? 'default' : 'secondary'}>
+                    {displayStamp?.cdnReady || (!displayStamp?.processing && /cloudinary/i.test(displayStamp?.originalFileUrl || ''))
+                      ? 'ready'
+                      : 'processing…'}
+                  </Badge>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">TSA</span>

@@ -10,8 +10,10 @@ import {
   ScanSearch, Bell, CheckCircle2, ExternalLink, FileWarning, Info
 } from 'lucide-react';
 import { MARKETING } from '@/content/legalCopy';
+import { useToast } from '@/components/ui/toast';
 
 export default function MonitorPage() {
+  const { toast } = useToast();
   const [monitors, setMonitors] = useState([]);
   const [stats, setStats] = useState(null);
   const [alerts, setAlerts] = useState([]);
@@ -50,7 +52,7 @@ export default function MonitorPage() {
       await api.post(`/monitor/enable/${stampId}`);
       loadData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to enable monitoring');
+      toast(err.response?.data?.error || 'Failed to enable monitoring', 'error');
     }
   }
 
@@ -59,7 +61,7 @@ export default function MonitorPage() {
       await api.post(`/monitor/disable/${stampId}`);
       loadData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed');
+      toast(err.response?.data?.error || 'Failed', 'error');
     }
   }
 
@@ -67,10 +69,10 @@ export default function MonitorPage() {
     setScanning(stampId);
     try {
       const res = await api.post(`/monitor/scan/${stampId}`);
-      alert(`Scan complete: ${res.data.scanned} files checked, ${res.data.matchesFound} matches found, ${res.data.newAlerts} new alerts`);
+      toast(`Scan complete: ${res.data.scanned} checked, ${res.data.matchesFound} matches, ${res.data.newAlerts} new alerts`, 'success');
       loadData();
     } catch (err) {
-      alert(err.response?.data?.error || 'Scan failed');
+      toast(err.response?.data?.error || 'Scan failed', 'error');
     } finally {
       setScanning(null);
     }

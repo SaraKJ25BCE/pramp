@@ -20,7 +20,7 @@ function createLimiter({ windowMs, max, message, skip }) {
 /** Safety net for anonymous abuse — skips static assets and OAuth redirects */
 const globalLimiter = createLimiter({
   windowMs: 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_GLOBAL_MAX || '2000', 10),
+  max: parseInt(process.env.RATE_LIMIT_GLOBAL_MAX || '100', 10),
   message: 'Too many requests, please try again later',
   skip: (req) => {
     const p = req.path || '';
@@ -73,6 +73,21 @@ const authMeLimiter = createLimiter({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_AUTH_ME_MAX || '300', 10),
   message: 'Too many requests, please try again later',
+});
+
+/** OAuth and login entry points */
+const authRouteLimiter = createLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_AUTH_MAX || '10', 10),
+  message: 'Too many authentication attempts, please try again later',
+});
+
+/** Per-user stamp creation cap (hourly) */
+const stampCreatePerUserLimiter = createLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: parseInt(process.env.RATE_LIMIT_STAMP_HOURLY_MAX || '20', 10),
+  message: 'Hourly stamp limit reached — try again later',
+  keyGenerator: (req) => req.user?.userId || req.ip,
 });
 
 function stampRouteLimiter(req, res, next) {
@@ -137,10 +152,12 @@ module.exports = {
   stampWriteLimiter,
   stampReadLimiter,
   stampRouteLimiter,
+  stampCreatePerUserLimiter,
   verifyLimiter,
   emailSendCodeLimiter,
   emailVerifyCodeLimiter,
   authMeLimiter,
+  authRouteLimiter,
   enforceStampQuota,
   enforceFairUse,
   isFairUseEnabled: () => !isQuotaFullyDisabled(),

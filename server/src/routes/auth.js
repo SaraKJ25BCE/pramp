@@ -3,7 +3,8 @@ const passport = require('passport');
 const authMiddleware = require('../middleware/auth');
 const prisma = require('../config/prisma');
 const { issueAuthToken } = require('../utils/authTokens');
-const { authMeLimiter } = require('../middleware/rateLimiter');
+const { authMeLimiter, authRouteLimiter } = require('../middleware/rateLimiter');
+const { sanitizePassport } = require('../utils/sanitizePassport');
 const emailAuthRoutes = require('./emailAuth');
 
 const router = express.Router();
@@ -12,6 +13,7 @@ router.use('/email', emailAuthRoutes);
 
 router.get(
   '/google',
+  authRouteLimiter,
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
 
@@ -44,11 +46,10 @@ router.get('/me', authMeLimiter, authMiddleware, async (req, res) => {
     }
 
     const { passport: userPassport, ...userData } = user;
-    const { privateKey, ...passportData } = userPassport || {};
 
     res.json({
       user: userData,
-      passport: passportData,
+      passport: sanitizePassport(userPassport),
     });
   } catch (error) {
     console.error('Error fetching user:', error);

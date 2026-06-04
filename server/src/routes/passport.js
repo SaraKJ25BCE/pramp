@@ -1,10 +1,13 @@
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const express = require('express');
 const authMiddleware = require('../middleware/auth');
 const prisma = require('../config/prisma');
 const { decryptPrivateKey } = require('../utils/crypto');
 const { logAudit } = require('../services/auditLog');
 const { SYSTEM_ATTESTATION } = require('../config/legalProof');
+const { sanitizePassport } = require('../utils/sanitizePassport');
+const { MAX_ENDPOINTS } = require('../services/webhooks');
 
 const router = express.Router();
 
@@ -32,9 +35,8 @@ router.patch('/settings/webhook', authMiddleware, async (req, res) => {
       data: { webhookUrl },
     });
 
-    const { privateKey, ...passportData } = updated;
     res.json({
-      webhookUrl: passportData.webhookUrl,
+      webhookUrl: sanitizePassport(updated).webhookUrl,
       message: webhookUrl ? 'Webhook URL saved' : 'Webhook URL cleared',
     });
   } catch (error) {
@@ -61,8 +63,7 @@ router.get('/api-keys', authMiddleware, async (req, res) => {
       },
     });
     if (!passport) return res.status(404).json({ error: 'Passport not found' });
-    const { privateKey: _pk, ...safe } = passport;
-    res.json({ apiKeys: safe.apiKeys });
+    res.json({ apiKeys: sanitizePassport(passport).apiKeys });
   } catch (error) {
     console.error('Error listing API keys:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -80,7 +81,7 @@ router.post('/api-keys', authMiddleware, async (req, res) => {
 
     const rawKey = crypto.randomBytes(24).toString('base64url');
     const keyPrefix = `${rawKey.slice(0, 8)}`;
-    const keyHash = crypto.createHash('sha256').update(rawKey, 'utf8').digest('hex');
+    const keyHash = await bcrypt.hash(rawKey, 10);
 
     const created = await prisma.apiKey.create({
       data: {
@@ -100,6 +101,91 @@ router.post('/api-keys', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Error creating API key:', error);
     res.status(500).json({ error: 'Failed to create API key' });
+  }
+});
+
+router.get('/webhooks', authMiddleware, async (req, res) => {
+  try {
+    const passportRecord = await prisma.passport.findUnique({
+      where: { userId: req.user.userId },
+    });
+    if (!passportRecord) return res.status(404).json({ error: 'Passport not found' });
+
+    const endpoints = await prisma.webhookEndpoint.findMany({
+      where: { passportId: passportRecord.id },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        url: true,
+        label: true,
+        enabled: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({ endpoints, maxEndpoints: MAX_ENDPOINTS });
+  } catch (error) {
+    console.error('Error listing webhooks:', error);
+    res.status(500).json({ error: 'Failed to list webhooks' });
+  }
+});
+
+router.post('/webhooks', authMiddleware, async (req, res) => {
+  try {
+    const { url, label } = req.body;
+    if (!url || typeof url !== 'string' || !/^https:\/\/.+/i.test(url.trim())) {
+      return res.status(400).json({ error: 'Webhook URL must start with https://' });
+    }
+
+    const passportRecord = await prisma.passport.findUnique({
+      where: { userId: req.user.userId },
+    });
+    if (!passportRecord) return res.status(404).json({ error: 'Passport not found' });
+
+    const count = await prisma.webhookEndpoint.count({
+      where: { passportId: passportRecord.id },
+    });
+    if (count >= MAX_ENDPOINTS) {
+      return res.status(400).json({ error: `Maximum ${MAX_ENDPOINTS} webhook endpoints allowed` });
+    }
+
+    const secret = crypto.randomBytes(32).toString('hex');
+    const created = await prisma.webhookEndpoint.create({
+      data: {
+        passportId: passportRecord.id,
+        url: url.trim(),
+        label: typeof label === 'string' ? label.slice(0, 80) : null,
+        secret,
+      },
+      select: { id: true, url: true, label: true, enabled: true, createdAt: true },
+    });
+
+    res.status(201).json({
+      endpoint: created,
+      secret,
+      message: 'Store this signing secret — it is used for HMAC verification and is not shown again.',
+    });
+  } catch (error) {
+    console.error('Error creating webhook:', error);
+    res.status(500).json({ error: 'Failed to create webhook' });
+  }
+});
+
+router.delete('/webhooks/:endpointId', authMiddleware, async (req, res) => {
+  try {
+    const passportRecord = await prisma.passport.findUnique({
+      where: { userId: req.user.userId },
+    });
+    if (!passportRecord) return res.status(404).json({ error: 'Passport not found' });
+
+    await prisma.webhookEndpoint.deleteMany({
+      where: { id: req.params.endpointId, passportId: passportRecord.id },
+    });
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting webhook:', error);
+    res.status(500).json({ error: 'Failed to delete webhook' });
   }
 });
 
@@ -147,8 +233,7 @@ router.patch('/username', authMiddleware, async (req, res) => {
       data: { username },
     });
 
-    const { privateKey, ...passportData } = updated;
-    res.json({ passport: passportData });
+    res.json({ passport: sanitizePassport(updated) });
   } catch (error) {
     console.error('Error updating username:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -261,8 +346,7 @@ router.get('/me', authMiddleware, async (req, res) => {
       return res.status(404).json({ error: 'Passport not found' });
     }
 
-    const { privateKey, ...passportData } = passportRecord;
-    res.json({ passport: passportData });
+    res.json({ passport: sanitizePassport(passportRecord) });
   } catch (error) {
     console.error('Error fetching passport:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -283,8 +367,7 @@ router.get('/:username', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    const { privateKey, ...passportData } = passportRecord;
-    res.json({ passport: passportData });
+    res.json({ passport: sanitizePassport(passportRecord) });
   } catch (error) {
     console.error('Error fetching passport:', error);
     res.status(500).json({ error: 'Internal server error' });

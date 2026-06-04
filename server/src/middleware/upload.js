@@ -1,4 +1,5 @@
 const multer = require('multer');
+const { validateFileMagic } = require('../utils/fileMagic');
 
 const ALLOWED_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml', 'image/tiff',
@@ -11,7 +12,6 @@ const ALLOWED_TYPES = [
   'application/zip', 'application/x-tar',
   'font/ttf', 'font/otf', 'font/woff', 'font/woff2',
   'model/gltf-binary', 'model/obj',
-  'application/octet-stream',
 ];
 
 const MAX_SIZE = 100 * 1024 * 1024;
@@ -30,4 +30,19 @@ const upload = multer({
   },
 });
 
+function validateUploadedMagic(req, res, next) {
+  const files = req.files || (req.file ? [req.file] : []);
+  for (const file of files) {
+    const check = validateFileMagic(file.buffer, file.mimetype);
+    if (!check.ok) {
+      return res.status(415).json({ error: check.error });
+    }
+    if (check.mime && check.mime !== file.mimetype) {
+      file.mimetype = check.mime;
+    }
+  }
+  next();
+}
+
 module.exports = upload;
+module.exports.validateUploadedMagic = validateUploadedMagic;

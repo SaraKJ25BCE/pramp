@@ -1,4 +1,4 @@
-const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const prisma = require('../config/prisma');
 
@@ -24,11 +24,24 @@ async function authOrApiKey(req, res, next) {
     req.headers['x-api-key'];
   if (rawKey) {
     try {
-      const keyHash = crypto.createHash('sha256').update(String(rawKey), 'utf8').digest('hex');
-      const record = await prisma.apiKey.findUnique({
-        where: { keyHash },
+      const keyStr = String(rawKey);
+      const prefix = keyStr.slice(0, 8);
+      const candidates = await prisma.apiKey.findMany({
+        where: { keyPrefix: prefix },
         include: { passport: true },
+        take: 10,
       });
+
+      let record = null;
+      for (const candidate of candidates) {
+        const match = candidate.keyHash.startsWith('$2')
+          ? await bcrypt.compare(keyStr, candidate.keyHash)
+          : candidate.keyHash === require('crypto').createHash('sha256').update(keyStr, 'utf8').digest('hex');
+        if (match) {
+          record = candidate;
+          break;
+        }
+      }
       if (!record) return res.status(401).json({ error: 'Invalid API key' });
 
       await prisma.apiKey.update({

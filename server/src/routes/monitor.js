@@ -245,7 +245,7 @@ router.post('/scan/:stampId', authMiddleware, async (req, res) => {
 
     for (const alert of newAlerts) {
       setImmediate(() => {
-        notifyWebhook(passport.id, 'monitor.alert', {
+        const alertPayload = {
           alertId: alert.id,
           stampId: stamp.id,
           monitorId: monitor.id,
@@ -253,7 +253,9 @@ router.post('/scan/:stampId', authMiddleware, async (req, res) => {
           sourceUrl: alert.sourceUrl,
           sourceEngine: alert.sourceEngine,
           confidence: alert.confidence,
-        });
+        };
+        notifyWebhook(passport.id, 'monitor.alert.new', alertPayload);
+        notifyWebhook(passport.id, 'monitor.alert', alertPayload);
       });
     }
 
