@@ -41,6 +41,27 @@ router.post('/file', upload.single('file'), async (req, res) => {
     const uploadedHash = computeHash(file.buffer);
     const isImage = file.mimetype.startsWith('image/') && !file.mimetype.includes('svg');
 
+    let c2paManifest = null;
+    if (isImage) {
+      try {
+        const c2paFormData = new FormData();
+        c2paFormData.append('file', file.buffer, {
+          filename: file.originalname,
+          contentType: file.mimetype,
+        });
+        const c2paResponse = await axios.post(
+          `${process.env.STEGO_SERVICE_URL}/c2pa/read`,
+          c2paFormData,
+          { headers: c2paFormData.getHeaders(), timeout: 10000 }
+        );
+        if (c2paResponse.data.has_manifest) {
+          c2paManifest = c2paResponse.data.manifest;
+        }
+      } catch (err) {
+        console.error('C2PA read failed:', err.message);
+      }
+    }
+
     const exactMatch = await prisma.stamp.findFirst({
       where: {
         OR: [
@@ -65,6 +86,7 @@ router.post('/file', upload.single('file'), async (req, res) => {
         stamp: { ...exactMatch, passport: undefined },
         passport: stripPrivateKey(exactMatch.passport),
         confidence: 'exact',
+        c2pa: c2paManifest,
         verification: {
           signatureValid: sigResult.verified,
           proofChainValid: chainResult.valid,
@@ -132,6 +154,7 @@ router.post('/file', upload.single('file'), async (req, res) => {
             passport: stripPrivateKey(matchedStamp.passport),
             confidence,
             matchDistance,
+            c2pa: c2paManifest,
             verification: { signatureValid: sigResult.verified },
           });
         }
@@ -178,6 +201,7 @@ router.post('/file', upload.single('file'), async (req, res) => {
             passport: stripPrivateKey(cnnMatch.passport),
             confidence,
             matchMethod: 'cnn_embedding',
+            c2pa: c2paManifest,
             verification: { signatureValid: sigResult.verified },
           });
         }
@@ -225,6 +249,7 @@ router.post('/file', upload.single('file'), async (req, res) => {
                 stamp: { ...stamp, passport: undefined },
                 passport: stripPrivateKey(stamp.passport),
                 confidence: 'none',
+                c2pa: c2paManifest,
                 verification: { perceptualWatermarkConflict: true },
               });
             }
@@ -237,6 +262,7 @@ router.post('/file', upload.single('file'), async (req, res) => {
               stamp: { ...stamp, passport: undefined },
               passport: stripPrivateKey(stamp.passport),
               confidence: 'watermark',
+              c2pa: c2paManifest,
               verification: { signatureValid: sigResult.verified },
             });
           }
@@ -251,6 +277,7 @@ router.post('/file', upload.single('file'), async (req, res) => {
       message: 'No ProofStamp found on this file',
       stamp: null,
       passport: null,
+      c2pa: c2paManifest,
     });
   } catch (error) {
     console.error('Error verifying file:', error);
@@ -374,6 +401,27 @@ router.post('/file-with-id', upload.single('file'), async (req, res) => {
     const uploadedHash = computeHash(file.buffer);
     const isImage = file.mimetype.startsWith('image/') && !file.mimetype.includes('svg');
 
+    let c2paManifest = null;
+    if (isImage) {
+      try {
+        const c2paFormData = new FormData();
+        c2paFormData.append('file', file.buffer, {
+          filename: file.originalname,
+          contentType: file.mimetype,
+        });
+        const c2paResponse = await axios.post(
+          `${process.env.STEGO_SERVICE_URL}/c2pa/read`,
+          c2paFormData,
+          { headers: c2paFormData.getHeaders(), timeout: 10000 }
+        );
+        if (c2paResponse.data.has_manifest) {
+          c2paManifest = c2paResponse.data.manifest;
+        }
+      } catch (err) {
+        console.error('C2PA read failed:', err.message);
+      }
+    }
+
     if (uploadedHash === stamp.originalHash || uploadedHash === stamp.stampedHash) {
       const sigResult = verifyStampSignature(stamp, stamp.passport);
       return res.json({
@@ -382,6 +430,7 @@ router.post('/file-with-id', upload.single('file'), async (req, res) => {
         stamp: { ...stamp, passport: undefined },
         passport: stripPrivateKey(stamp.passport),
         confidence: 'exact',
+        c2pa: c2paManifest,
         verification: { signatureValid: sigResult.verified },
       });
     }
@@ -418,6 +467,7 @@ router.post('/file-with-id', upload.single('file'), async (req, res) => {
             passport: stripPrivateKey(stamp.passport),
             confidence,
             matchDistance: bestDist,
+            c2pa: c2paManifest,
           });
         }
       } catch (err) {
@@ -445,6 +495,7 @@ router.post('/file-with-id', upload.single('file'), async (req, res) => {
             stamp: { ...stamp, passport: undefined },
             passport: stripPrivateKey(stamp.passport),
             confidence: 'watermark',
+            c2pa: c2paManifest,
             verification: { signatureValid: sigResult.verified },
           });
         }
@@ -459,6 +510,7 @@ router.post('/file-with-id', upload.single('file'), async (req, res) => {
       stamp: { ...stamp, passport: undefined },
       passport: stripPrivateKey(stamp.passport),
       confidence: 'none',
+      c2pa: c2paManifest,
     });
   } catch (error) {
     console.error('Error verifying file with ID:', error);

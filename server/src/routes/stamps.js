@@ -466,7 +466,6 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
 
   const MAX_ID_RETRIES = 8;
   let stamp;
-  let stampId;
 
   for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt++) {
     if (attempt > 0) {

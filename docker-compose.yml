@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: proofstamp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  server:
+    image: node:20
+    working_dir: /app/server
+    volumes:
+      - ./server:/app/server
+      - ./prisma:/app/prisma
+    ports:
+      - "3001:3001"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/proofstamp?schema=public
+      - STEGO_SERVICE_URL=http://stego-service:8000
+      - CLIENT_URL=http://localhost:5173
+      - PORT=3001
+    command: >
+      sh -c "npm install && npm run prisma:generate && npx prisma migrate deploy --schema=../prisma/schema.prisma && npm run dev"
+    depends_on:
+      - db
+
+  client:
+    image: node:20
+    working_dir: /app
+    volumes:
+      - ./client:/app
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:3001
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
+  stego-service:
+    image: python:3.11
+    working_dir: /app
+    volumes:
+      - ./stego-service:/app
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "apt-get update && apt-get install -y libgl1 libglib2.0-0 && pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+
+volumes:
+  postgres_data:

@@ -17,7 +17,7 @@ function getServerUrl() {
   return process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3001}`;
 }
 
-function generateDmcaLetter(stamp, passport, infringingUrl, platform) {
+function generateLegalNotice(stamp, passport, infringingUrl, platform, type = 'copyright') {
   const baseUrl = getServerUrl();
   const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -28,21 +28,57 @@ function generateDmcaLetter(stamp, passport, infringingUrl, platform) {
     ? `- ${BSA_FRAME.shortLabel}: ${stamp.evidenceCertificateUrl}`
     : `- ${BSA_FRAME.shortLabel}: ${baseUrl}/legal/${stamp.id}/system-certificate`;
 
-  return `DMCA TAKEDOWN NOTICE
+  if (type === 'deepfake') {
+    return `URGENT: STATUTORY GRIEVANCE NOTICE — IMPERSONATION / DEEPFAKE
 Date: ${date}
 
-To: ${platform} Copyright/Legal Team
-Re: Copyright Infringement — Immediate Takedown Request
+To: The Resident Grievance Officer, ${platform}
+Re: Immediate 24-Hour Takedown Request under Rule 3(2)(b) of the IT (Intermediary Guidelines and Digital Media Ethics Code) Rules, 2021
+
+I, ${passport.displayName} (@${passport.username}), am the individual depicted in the original image/content described below. I am writing to notify you that the content hosted at the URL below is a digitally manipulated, non-consensual deepfake or impersonation of my likeness.
+
+ORIGINAL VERIFIED IDENTITY RECORD:
+- Stamp ID: ${stamp.id}
+- Registration Date: ${new Date(stamp.createdAt).toISOString()}
+- SHA-256 Fingerprint: ${stamp.originalHash}
+- Verification: ${clientUrl}/verify?id=${stamp.id}
+
+INFRINGING MANIPULATED MATERIAL:
+- URL: ${infringingUrl}
+- Platform: ${platform}
+
+CRYPTOGRAPHIC PROOF OF TAMPERING:
+This original image was registered with ProofStamp. The uploaded material on your platform fails structural similarity tests and C2PA provenance checks, definitively proving it is a synthetic manipulation (deepfake).
+${tsaLine}
+${s63Line}
+
+STATUTORY MANDATE (INDIA):
+Under Rule 3(2)(b) of the Information Technology (Intermediary Guidelines) Rules, 2021, you are legally mandated to take all reasonable and practicable measures to remove or disable access to this content within 24 hours of receiving this complaint.
+
+REQUESTED ACTION:
+Remove the manipulated material at ${infringingUrl} immediately to comply with Indian law.
+
+Contact Information:
+Name: ${passport.displayName}
+ProofStamp ID: ${passport.id}
+Username: @${passport.username}`;
+  }
+
+  return `DMCA & IT RULES 2021 TAKEDOWN NOTICE
+Date: ${date}
+
+To: ${platform} Copyright/Grievance Officer
+Re: Copyright Infringement — Takedown Request (Rule 3(1)(b)(iv) of IT Rules 2021)
 
 I, ${passport.displayName} (@${passport.username}), am the exclusive rights holder of the copyrighted work described below. I am writing to notify you of an infringement of my copyright.
 
 ORIGINAL WORK:
 - Title: ${stamp.title}
 - Stamp ID: ${stamp.id}
-- Registration Date: ${new Date(stamp.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+- Registration Date: ${new Date(stamp.createdAt).toISOString()}
 - SHA-256 Fingerprint: ${stamp.originalHash}
 - License: ${stamp.license}
-- Verification: ${process.env.CLIENT_URL}/verify?id=${stamp.id}
+- Verification: ${clientUrl}/verify?id=${stamp.id}
 
 INFRINGING MATERIAL:
 - URL: ${infringingUrl}
@@ -52,38 +88,18 @@ CRYPTOGRAPHIC PROOF OF OWNERSHIP:
 This work was registered with ProofStamp on ${new Date(stamp.createdAt).toISOString()} with:
 - RSA-2048 digital signature tied to my verified identity
 - SHA-256 hash: ${stamp.originalHash}
-- Perceptual fingerprint (pHash): ${stamp.pHash || 'N/A'}
 - DWT-DCT frequency-domain watermark embedded in the image
 ${tsaLine}
 ${s63Line}
-${stamp.c2paManifestUrl ? '- C2PA Content Credentials manifest embedded' : ''}
-
-PROOF ARTIFACTS (attached / available for download):
-- Proof bundle (JSON): ${baseUrl}/stamps/${stamp.id}/proof
-- Counsel Evidence Packet (ZIP): ${baseUrl}/legal/${stamp.id}/litigation-pack (authenticated; requires creator attestation)
-- Public verification: ${clientUrl}/verify?id=${stamp.id}
-- TSA token: ${baseUrl}/tsa/token/${stamp.id}
-- Artifacts catalog: ${baseUrl}/legal/${stamp.id}/artifacts
-
-This evidence constitutes cryptographic proof that I possessed this work at the stated time. Present with counsel as appropriate under applicable law.
-
-STATEMENTS:
-1. I have a good faith belief that the use of the material in the manner complained of is not authorized by the copyright owner, its agent, or the law.
-2. The information in this notification is accurate, and under penalty of perjury, I am the owner of an exclusive right that is being infringed.
-3. I acknowledge that under Section 512(f) of the DMCA, any person who knowingly materially misrepresents infringement may be subject to liability.
 
 REQUESTED ACTION:
-Please remove or disable access to the infringing material immediately.
+Under Rule 3(1)(b) of the IT Rules 2021 and the DMCA, please remove or disable access to the infringing material immediately.
 
 Contact Information:
 Name: ${passport.displayName}
 ProofStamp ID: ${passport.id}
-Username: @${passport.username}
-Verification Page: ${process.env.CLIENT_URL}/u/${passport.username}
 
-Digital Signature: ${stamp.signature.substring(0, 64)}...
-
-This notice is sent pursuant to the Digital Millennium Copyright Act (17 U.S.C. § 512).`;
+This notice is sent pursuant to the Information Technology Rules, 2021 and the Digital Millennium Copyright Act (17 U.S.C. § 512).`;
 }
 
 router.get('/', authMiddleware, async (req, res) => {
@@ -121,7 +137,7 @@ router.get('/', authMiddleware, async (req, res) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { stampId, infringingUrl, platform, alertId, autoSubmit } = req.body;
+    const { stampId, infringingUrl, platform, alertId, autoSubmit, type = 'copyright' } = req.body;
 
     if (!stampId || !infringingUrl || !platform) {
       return res.status(400).json({ error: 'stampId, infringingUrl, and platform are required' });
@@ -135,7 +151,7 @@ router.post('/', authMiddleware, async (req, res) => {
     if (stamp.passportId !== passport.id) return res.status(403).json({ error: 'Not your stamp' });
 
     const platformConfig = getPlatformConfig(platform);
-    const dmcaLetter = generateDmcaLetter(stamp, passport, infringingUrl, platformConfig.name);
+    const dmcaLetter = generateLegalNotice(stamp, passport, infringingUrl, platformConfig.name, type);
 
     const takedown = await prisma.takedown.create({
       data: {

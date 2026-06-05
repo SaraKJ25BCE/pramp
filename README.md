@@ -2,6 +2,9 @@
 
 Invisible digital stamps for protecting creative work. Upload a file (images, documents, audio, video, etc.), register a cryptographic hash and RSA identity signature, optionally embed resilient image watermarks for photos, and verify authenticity later through multiple layers.
 
+**Why ProofStamp?** (vs. Blockchain/NFT/Email-yourself)
+> **Blockchain/NFTs** are public, expensive, and require crypto wallets; **emailing yourself** is legally flimsy and easily spoofed. ProofStamp offers **cryptographically secure, legally compliant (BSA 2023 Sec 63), privacy-first digital forensics**—without gas fees or making your private work public.
+
 ## Architecture
 
 ```
@@ -12,6 +15,17 @@ prisma/          → Database schema & migrations (`prisma/migrations/` is versi
 ```
 
 ## Quick Start
+
+The fastest way to run all 3 services locally is using **Docker Compose**:
+```bash
+docker compose up --build
+```
+For detailed local setup instructions, please refer to the [Local Setup Guide](docs/local-setup.md).
+
+### Manual Setup
+
+If you prefer to run services manually:
+
 
 ### 1. Database
 

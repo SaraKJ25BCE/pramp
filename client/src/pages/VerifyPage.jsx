@@ -311,6 +311,43 @@ function VerificationResult({ result, onReset }) {
               </div>
             )}
 
+            {result.c2pa && (
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 text-sm space-y-2">
+                <p className="font-medium text-slate-900 flex items-center gap-2">
+                  <Fingerprint className="h-4 w-4 text-slate-700" /> C2PA Content Provenance
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-muted-foreground block">Generator</span>
+                    <span className="font-medium">{result.c2pa.claim_generator || 'Unknown'}</span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block">Origin Assertion</span>
+                    <span className="font-medium text-emerald-700 font-semibold">
+                      {result.c2pa.assertions?.find(a => a.label === 'proofstamp.provenance')?.data?.origin || 'Human Created'}
+                    </span>
+                  </div>
+                  {result.c2pa.assertions?.find(a => a.label === 'c2pa.training-mining') && (
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground block">AI Training</span>
+                      <span className="font-medium text-red-600">Opt-out Enforced (Do Not Train)</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {outcome === 'A' && (
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-sm">
+                <p className="font-medium text-amber-900 flex items-center gap-2 mb-1">
+                  <Shield className="h-4 w-4 text-amber-700" /> Indian IT Rules 2021 Readiness
+                </p>
+                <p className="text-amber-800 text-xs leading-relaxed">
+                  This cryptographic proof satisfies Section 63 of the BSA 2023. It can be used to issue a mandatory 24-hour deepfake takedown under Rule 3(2)(b) or a 72-hour copyright takedown under Rule 3(1)(b).
+                </p>
+              </div>
+            )}
+
             <div className="pt-3 border-t flex gap-2 flex-wrap">
               <Button variant="outline" size="sm" asChild>
                 <Link to={`/p/${stamp.id}`}>

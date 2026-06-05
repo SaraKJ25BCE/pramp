@@ -103,6 +103,7 @@ def create_c2pa_manifest(
     title: str = "",
     license_name: str = "All Rights Reserved",
     do_not_train: bool = True,
+    is_human_created: bool = True,
     output_format: str = "image/png",
 ) -> bytes | None:
     """
@@ -161,6 +162,13 @@ def create_c2pa_manifest(
                 },
             },
         },
+        {
+            "label": "proofstamp.provenance",
+            "data": {
+                "origin": "Human Created" if is_human_created else "AI Generated",
+                "verifiedBy": "ProofStamp"
+            }
+        }
     ]
 
     if do_not_train:

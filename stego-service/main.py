@@ -306,6 +306,7 @@ async def embed_c2pa(
     title: str = Form(""),
     license_name: str = Form("All Rights Reserved"),
     do_not_train: bool = Form(True),
+    is_human_created: bool = Form(True),
 ):
     """Embed a C2PA (Content Credentials) manifest into an image."""
     if not c2pa.C2PA_AVAILABLE:
@@ -325,6 +326,7 @@ async def embed_c2pa(
             title=title,
             license_name=license_name,
             do_not_train=do_not_train,
+            is_human_created=is_human_created,
         )
 
         if result is None:
