@@ -17,6 +17,7 @@ model User {
   createdAt     DateTime           @default(now())
   passport      Passport?
   notifications UserNotification[]
+  aiModelKeys   AIModelAPIKey[]
 }
 
 model EmailVerification {
@@ -114,6 +115,10 @@ model Stamp {
   takedowns        Takedown[]
   versions         StampVersion[]
   stampAnchors     StampAnchor[]
+  aiAccessTokens   AIAccessToken[]
+  aiRegistryMonitors AIRegistryMonitor[]
+  aiTrainingDetections AITrainingDetection[]
+  trainingDataAudits TrainingDataAudit[]
 
   @@index([pHash])
   @@index([originalHash])
@@ -307,4 +312,106 @@ model AuditLog {
   @@index([userId])
   @@index([action])
   @@index([createdAt])
+}
+
+// AI Training Protection Models
+model AIAccessToken {
+  id              String    @id @default(cuid())
+  stampId         String
+  stamp           Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  tokenHash       String    @unique
+  tokenPrefix     String    @unique
+  purpose         String    @default("license_verification") // license_verification, training_opt_out, model_provenance
+  licenseType     String    @default("all-rights-reserved") // all-rights-reserved, cc-by, cc-by-sa, cc-by-nd, cc-by-nc, cc-by-nc-sa, cc-by-nc-nd
+  restrictions    String    @db.Text // JSON: {allowAI, allowCommercial, allowModification, attribution_required}
+  metadata        String?   @db.Text // JSON: {model_ids, dataset_names, usage_context}
+  issuedAt        DateTime  @default(now())
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  verificationCount Int     @default(0)
+  lastVerifiedAt  DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([stampId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+model AIRegistryMonitor {
+  id              String    @id @default(cuid())
+  stampId         String
+  stamp           Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  monitoringPlatforms String @db.Text // JSON: {hugging_face, replicate, stability_ai, civitai, modelforge, kaggle}
+  isActive        Boolean   @default(true)
+  lastScanAt      DateTime?
+  nextScanAt      DateTime?
+  scanFrequency   String    @default("weekly") // hourly, daily, weekly, monthly
+  detectionCount  Int       @default(0)
+  createdAt       DateTime  @default(now())
+  detections      AITrainingDetection[]
+
+  @@index([stampId])
+  @@index([isActive])
+  @@index([nextScanAt])
+}
+
+model AITrainingDetection {
+  id              String    @id @default(cuid())
+  registryMonitorId String
+  registryMonitor AIRegistryMonitor @relation(fields: [registryMonitorId], references: [id], onDelete: Cascade)
+  stampId         String
+  stamp           Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  platform        String    // hugging_face, replicate, stability_ai, civitai, kaggle
+  modelId         String
+  modelName       String
+  modelUrl        String    @db.Text
+  detectionMethod String    // hash_match, embedding_similarity, metadata_analysis
+  confidence      Float     // 0-1 confidence score
+  datasetName     String?
+  datasetUrl      String?   @db.Text
+  detectedAt      DateTime  @default(now())
+  reportedAt      DateTime?
+  responseStatus  String    @default("new") // new, investigating, contacted, resolved, ignored
+  platformResponse String?  @db.Text
+  internalNotes   String?   @db.Text
+  createdAt       DateTime  @default(now())
+
+  @@index([stampId])
+  @@index([registryMonitorId])
+  @@index([platform])
+  @@index([responseStatus])
+  @@index([detectedAt])
+}
+
+model AIModelAPIKey {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform        String    // hugging_face, replicate, stability_ai, civitai, kaggle
+  keyHash         String    @unique
+  keyPrefix       String
+  label           String?
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId])
+  @@index([platform])
+}
+
+model TrainingDataAudit {
+  id              String    @id @default(cuid())
+  stampId         String
+  stamp           Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  auditType       String    // usage_in_dataset, model_training, fine_tuning, embedding_generation
+  platform        String
+  detectionHash   String    // hash of where detected (file path, model id, etc)
+  evidence        String    @db.Text // JSON evidence blob
+  severity        String    @default("high") // low, medium, high, critical
+  actionTaken     String?   // sent_takedown, contacted_platform, legal_notice
+  resolutionDate  DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([stampId])
+  @@index([platform])
+  @@index([auditType])
 }

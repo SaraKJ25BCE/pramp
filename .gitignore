@@ -10,3 +10,4 @@ venv/
 .DS_Store
 *.log
 server/uploads/
+ProofStamp_Process_Flows.docx

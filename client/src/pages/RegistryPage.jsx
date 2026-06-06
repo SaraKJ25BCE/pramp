@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '@/lib/api';
-import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,7 +15,6 @@ export default function RegistryPage() {
   const [searchHash, setSearchHash] = useState('');
   const [searchResult, setSearchResult] = useState(null);
   const [searching, setSearching] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadStats();
@@ -28,8 +26,6 @@ export default function RegistryPage() {
       setStats(res.data);
     } catch (err) {
       console.error(err);
-    } finally {
-      setLoading(false);
     }
   }
 

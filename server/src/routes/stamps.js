@@ -368,7 +368,7 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
   const originalFileUrl = `${baseUrl}/uploads/originals/${stampId}.${originalExt}`;
   let thumbnailUrl = isImage ? originalFileUrl : null;
 
-  let pHash = null, dHash = null, stampedBuffer = null, stampedHash = null;
+  let pHash = null, dHash = null, embedding = null, stampedBuffer = null, stampedHash = null;
   let stampedFileUrl = null;
   let audioFingerprint = null, videoFingerprint = null;
 
@@ -377,6 +377,7 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
       const stegoData = await processStego(file, stampId);
       pHash = stegoData.pHash;
       dHash = stegoData.dHash;
+      embedding = Array.isArray(stegoData.embedding) ? stegoData.embedding : null;
 
       if (stegoData.stamped_base64) {
         stampedBuffer = Buffer.from(stegoData.stamped_base64, 'base64');
@@ -475,11 +476,12 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
       stamp = await prisma.stamp.create({
         data: {
           id: stampId,
-          passportId: passportRecord.id,
+          passport: { connect: { id: passportRecord.id } },
           originalHash: serverHash,
           stampedHash,
           pHash,
           dHash,
+          embedding: embedding || undefined,
           audioFingerprint,
           videoFingerprint,
           title,
@@ -786,6 +788,7 @@ router.get('/:stampId/proof', async (req, res) => {
         category: stamp.category,
         size: stamp.fileSize,
         sha256: stamp.originalHash,
+        c2paManifestUrl: stamp.c2paManifestUrl || null,
       },
       protection: {
         signature: stamp.signature,
@@ -793,6 +796,7 @@ router.get('/:stampId/proof', async (req, res) => {
         timestamp: stamp.createdAt.toISOString(),
         proofChain: stamp.proofChain ? JSON.parse(stamp.proofChain) : null,
         perceptualHashes: stamp.pHash ? { pHash: stamp.pHash, dHash: stamp.dHash } : null,
+        cnnEmbeddingAvailable: Array.isArray(stamp.embedding) && stamp.embedding.length > 0,
         audioFingerprint: stamp.audioFingerprint ? JSON.parse(stamp.audioFingerprint) : null,
         videoFingerprint: stamp.videoFingerprint ? JSON.parse(stamp.videoFingerprint) : null,
       },
