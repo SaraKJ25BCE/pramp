@@ -35,6 +35,8 @@ function buildConflictResponse(stamp, matchType, matchDistance = null) {
   };
 }
 
+const CNN_DUPLICATE_THRESHOLD = 0.90;
+
 async function computeImageHashes(file) {
   const formData = new FormData();
   formData.append('file', file.buffer, {
@@ -47,6 +49,39 @@ async function computeImageHashes(file) {
     { headers: formData.getHeaders(), timeout: 30000 }
   );
   return { pHash: response.data.pHash, dHash: response.data.dHash };
+}
+
+async function computeImageEmbedding(file) {
+  try {
+    const formData = new FormData();
+    formData.append('file', file.buffer, {
+      filename: file.originalname,
+      contentType: file.mimetype,
+    });
+    const response = await axios.post(
+      `${process.env.STEGO_SERVICE_URL}/embedding`,
+      formData,
+      { headers: formData.getHeaders(), timeout: 30000 }
+    );
+    return response.data?.embedding || null;
+  } catch (err) {
+    console.warn('Image embedding check skipped:', err.message);
+    return null;
+  }
+}
+
+function cosineSimilarity(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) return 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
 }
 
 async function findPerceptualImageDuplicate(pHash, dHash) {
@@ -72,6 +107,30 @@ async function findPerceptualImageDuplicate(pHash, dHash) {
 
   if (!best) return null;
   return buildConflictResponse(best, 'perceptual', bestDist);
+}
+
+async function findImageEmbeddingDuplicate(embedding) {
+  if (!Array.isArray(embedding) || embedding.length === 0) return null;
+
+  const candidates = await prisma.stamp.findMany({
+    where: { category: 'image', embedding: { not: null } },
+    include: { passport: { select: { username: true, displayName: true } } },
+  });
+
+  let best = null;
+  let bestSim = 0;
+
+  for (const stamp of candidates) {
+    if (!Array.isArray(stamp.embedding) || stamp.embedding.length === 0) continue;
+    const sim = cosineSimilarity(embedding, stamp.embedding);
+    if (sim > CNN_DUPLICATE_THRESHOLD && sim > bestSim) {
+      bestSim = sim;
+      best = stamp;
+    }
+  }
+
+  if (!best) return null;
+  return buildConflictResponse(best, 'cnn_embedding', Number(bestSim.toFixed(3)));
 }
 
 async function findAudioFingerprintDuplicate(file) {
@@ -142,6 +201,12 @@ async function findGlobalDuplicate(file, serverHash) {
       const { pHash, dHash } = await computeImageHashes(file);
       const perceptual = await findPerceptualImageDuplicate(pHash, dHash);
       if (perceptual) return perceptual;
+
+      const embedding = await computeImageEmbedding(file);
+      if (embedding) {
+        const embeddingDuplicate = await findImageEmbeddingDuplicate(embedding);
+        if (embeddingDuplicate) return embeddingDuplicate;
+      }
     } catch (err) {
       console.warn('Perceptual duplicate check failed:', err.message);
     }

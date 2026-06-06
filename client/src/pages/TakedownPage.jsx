@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   FileWarning, Send, Copy, CheckCircle2, Clock, XCircle,
-  Loader2, ExternalLink, AlertTriangle, ChevronDown, ChevronUp
+  Loader2, ExternalLink, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { useToast } from '@/components/ui/toast';
 

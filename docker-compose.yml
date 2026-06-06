@@ -50,7 +50,7 @@ services:
     ports:
       - "8000:8000"
     command: >
-      sh -c "apt-get update && apt-get install -y libgl1 libglib2.0-0 && pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+      sh -c "apt-get update && apt-get install -y libgl1 libglib2.0-0 libchromaprint-tools && pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
 
 volumes:
   postgres_data:

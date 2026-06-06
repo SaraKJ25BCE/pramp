@@ -213,18 +213,6 @@ export default function StampPage() {
     navigator.clipboard.writeText(text);
   }
 
-  async function forceDownload(url, filename) {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(link.href);
-  }
-
   function reset() {
     setResult(null);
     setBulkResults(null);

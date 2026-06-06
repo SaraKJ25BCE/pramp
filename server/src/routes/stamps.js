@@ -476,7 +476,7 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
       stamp = await prisma.stamp.create({
         data: {
           id: stampId,
-          passportId: passportRecord.id,
+          passport: { connect: { id: passportRecord.id } },
           originalHash: serverHash,
           stampedHash,
           pHash,
@@ -788,6 +788,7 @@ router.get('/:stampId/proof', async (req, res) => {
         category: stamp.category,
         size: stamp.fileSize,
         sha256: stamp.originalHash,
+        c2paManifestUrl: stamp.c2paManifestUrl || null,
       },
       protection: {
         signature: stamp.signature,
@@ -795,6 +796,7 @@ router.get('/:stampId/proof', async (req, res) => {
         timestamp: stamp.createdAt.toISOString(),
         proofChain: stamp.proofChain ? JSON.parse(stamp.proofChain) : null,
         perceptualHashes: stamp.pHash ? { pHash: stamp.pHash, dHash: stamp.dHash } : null,
+        cnnEmbeddingAvailable: Array.isArray(stamp.embedding) && stamp.embedding.length > 0,
         audioFingerprint: stamp.audioFingerprint ? JSON.parse(stamp.audioFingerprint) : null,
         videoFingerprint: stamp.videoFingerprint ? JSON.parse(stamp.videoFingerprint) : null,
       },

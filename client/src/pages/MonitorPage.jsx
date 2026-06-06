@@ -7,9 +7,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   Radar, Shield, AlertTriangle, Eye, EyeOff, Loader2,
-  ScanSearch, Bell, CheckCircle2, ExternalLink, FileWarning, Info
+  ScanSearch, Bell, CheckCircle2, FileWarning, Info
 } from 'lucide-react';
-import { MARKETING } from '@/content/legalCopy';
 import { useToast } from '@/components/ui/toast';
 
 export default function MonitorPage() {

@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import api from '@/lib/api';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Bell, Loader2, ExternalLink } from 'lucide-react';
+import { Bell, Loader2 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL;
 

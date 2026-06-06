@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Stamp, FileCheck, Plus, Calendar, Shield, FileImage, Music, Video,
+  FileCheck, Plus, Calendar, Shield, FileImage, Music, Video,
   Code, File, Package, Type, Lock, Download, Trash2, AlertTriangle, Scale
 } from 'lucide-react';
 import { downloadCounselPacket, legalStatusBadges, MARKETING } from '@/lib/legalProof';
@@ -82,7 +82,7 @@ export default function Dashboard() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(link.href);
-    } catch (err) {
+    } catch {
       window.open(url, '_blank');
     }
   }

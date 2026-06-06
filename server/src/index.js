@@ -27,6 +27,7 @@ const tsaRoutes = require('./routes/tsa');
 const legalProofRoutes = require('./routes/legalProof');
 const notificationRoutes = require('./routes/notifications');
 const apiVerifyRoutes = require('./routes/apiVerify');
+const aiProtectionRoutes = require('./routes/aiProtection');
 const embedBadgeRoutes = require('./routes/embedBadge');
 const { logFairUseStartup } = require('./config/fairUse');
 const { startTsaRetryJob } = require('./jobs/tsaRetry');
@@ -35,6 +36,7 @@ const { startBlockchainAnchorJob } = require('./jobs/blockchainAnchor');
 const { startOtsUpgradeJob } = require('./jobs/otsUpgrade');
 const { startAuditHeadGithubJob } = require('./jobs/auditHeadGithub');
 const { startScheduledScanner } = require('./jobs/scheduledScanner');
+const { startAIRegistryScanJob } = require('./jobs/aiRegistryScan');
 const { getPlatformPublicKeyPem } = require('./services/platformSigning');
 
 const {
@@ -87,6 +89,7 @@ app.use('/tsa', tsaRoutes);
 app.use('/legal', legalProofRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/api/verify', apiVerifyRoutes);
+app.use('/api/ai-protection', aiProtectionRoutes);
 
 app.get('/ai.txt', (req, res) => {
   res.setHeader('Content-Type', 'text/plain');
@@ -160,6 +163,7 @@ connectDatabase()
     startTsaRetryJob();
     startWebhookRetryJob();
     startAuditHeadGithubJob();
+    startAIRegistryScanJob();
     if (process.env.BLOCKCHAIN_ANCHOR_DISABLED !== 'true') {
       startBlockchainAnchorJob();
       startOtsUpgradeJob();

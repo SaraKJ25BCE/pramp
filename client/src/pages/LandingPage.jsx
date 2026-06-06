@@ -87,7 +87,7 @@ export default function LandingPage() {
                 title: 'Legal Admissibility',
                 desc: `Instantly download a ${BSA_FRAME.shortLabel} and ${MARKETING.counselPacketName} ready for DMCA takedowns.`,
               },
-            ].map((item, i) => (
+            ].map((item) => (
               <div key={item.step} className="p-10 rounded-3xl bento-card relative group flex flex-col items-start text-left">
                 <div className="h-12 w-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-16 group-hover:bg-white group-hover:text-black transition-all duration-500">
                   <item.icon className="h-5 w-5 text-white/70 group-hover:text-black transition-colors" />
