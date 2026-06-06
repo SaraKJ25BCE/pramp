@@ -269,7 +269,7 @@ export default function StampPage() {
     return (
       <Layout>
         <div className="max-w-2xl mx-auto">
-          <Card className="border-green-200 bg-green-50/50">
+          <Card className="border-green-200 bg-black-50/50">
             <CardContent className="p-8 text-center">
               <div className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-green-100 mb-4">
                 <CheckCircle2 className="h-8 w-8 text-green-600" />
@@ -372,23 +372,30 @@ export default function StampPage() {
                     <p className="text-xs text-muted-foreground border rounded p-2 bg-white">
                       {CREATOR_ATTESTATION_STATEMENT}
                     </p>
-                    <label className="flex items-start gap-2 text-sm">
+                    <label className="flex items-start gap-3 text-sm leading-relaxed">
                       <input
                         type="checkbox"
                         checked={statementConfirm}
                         onChange={(e) => setStatementConfirm(e.target.checked)}
-                        className="mt-1"
+                        className="mt-1 h-4 w-4 shrink-0 accent-black"
                       />
-                      <span>I have read and confirm the statement above (type your name below — do not use autofill).</span>
+                      <span className="text-zinc-700">
+                        I have read and confirm the statement above
+                        (type your name below — do not use autofill).
+                      </span>
                     </label>
-                    <label className="flex items-start gap-2 text-sm">
+
+                    <label className="flex items-start gap-3 text-sm leading-relaxed">
                       <input
                         type="checkbox"
                         checked={attestConfirm}
                         onChange={(e) => setAttestConfirm(e.target.checked)}
-                        className="mt-1"
+                        className="mt-1 h-4 w-4 shrink-0 accent-black"
                       />
-                      <span>I understand this binds my Passport RSA key and is separate from the system certificate.</span>
+                      <span className="text-zinc-700">
+                        I understand this binds my Passport RSA key
+                        and is separate from the system certificate.
+                      </span>
                     </label>
                     <Input placeholder="Full legal name (typed)" value={attestName} onChange={(e) => setAttestName(e.target.value)} autoComplete="off" />
                     <div className="grid grid-cols-2 gap-2">

@@ -101,7 +101,7 @@ export default function DeveloperSettings() {
 
   return (
     <div className="space-y-6">
-      <Card>
+      <Card className="bg-zinc-950 border-0 shadow-none rounded-[2rem] text-white">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Key className="h-5 w-5" /> API Keys
@@ -154,7 +154,7 @@ export default function DeveloperSettings() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="bg-zinc-950 border-0 shadow-none rounded-[2rem] text-white">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Webhook className="h-5 w-5" /> Webhooks
@@ -177,11 +177,13 @@ export default function DeveloperSettings() {
           {webhooks.length < maxWebhooks && (
             <div className="space-y-2">
               <Input
+                className="bg-black border-zinc-800 text-white rounded-2xl"
                 placeholder="https://your-server.com/webhooks/proofstamp"
                 value={webhookUrl}
                 onChange={(e) => setWebhookUrl(e.target.value)}
               />
               <Input
+                className="bg-black border-zinc-800 text-white rounded-2xl"
                 placeholder="Label (optional)"
                 value={webhookLabel}
                 onChange={(e) => setWebhookLabel(e.target.value)}

@@ -21,7 +21,7 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@db:5432/proofstamp?schema=public
+      - DATABASE_URL=${DATABASE_URL}
       - STEGO_SERVICE_URL=http://stego-service:8000
       - CLIENT_URL=http://localhost:5173
       - PORT=3001

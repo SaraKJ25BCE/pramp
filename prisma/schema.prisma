@@ -11,10 +11,10 @@ model User {
   id            String             @id @default(cuid())
   googleId      String?            @unique
   email         String             @unique
-  emailVerified Boolean            @default(false)
   avatarUrl     String?
-  plan          String             @default("pro")
   createdAt     DateTime           @default(now())
+  plan          String             @default("pro")
+  emailVerified Boolean            @default(false)
   passport      Passport?
   notifications UserNotification[]
 }
@@ -36,84 +36,84 @@ model Passport {
   userId           String            @unique
   username         String?           @unique
   displayName      String
-  publicKey        String            @db.Text
-  privateKey       String            @db.Text
-  webhookUrl       String?           @db.Text
+  publicKey        String
+  privateKey       String
   createdAt        DateTime          @default(now())
+  webhookUrl       String?
+  apiKeys          ApiKey[]
+  monitors         Monitor[]
   user             User              @relation(fields: [userId], references: [id])
   stamps           Stamp[]
-  monitors         Monitor[]
   takedowns        Takedown[]
-  apiKeys          ApiKey[]
   webhookEndpoints WebhookEndpoint[]
 }
 
 model ApiKey {
-  id           String    @id @default(cuid())
-  passportId   String
-  name         String?
-  keyPrefix    String
-  keyHash      String    @unique
-  createdAt    DateTime  @default(now())
-  lastUsedAt   DateTime?
-  passport     Passport  @relation(fields: [passportId], references: [id], onDelete: Cascade)
+  id         String    @id @default(cuid())
+  passportId String
+  name       String?
+  keyPrefix  String
+  keyHash    String    @unique
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  passport   Passport  @relation(fields: [passportId], references: [id], onDelete: Cascade)
 
   @@index([passportId])
 }
 
 model Stamp {
-  id               String   @id
-  passportId       String
-  originalHash     String
-  stampedHash      String?
-  pHash            String?
-  dHash            String?
-  embedding        Float[]
-  audioFingerprint String?  @db.Text
-  videoFingerprint String?  @db.Text
-  title            String
-  description      String?
-  license          String
-  category         String   @default("image")
-  fileType         String
-  fileName         String?
-  fileSize         Int?
-  originalFileUrl  String
-  stampedFileUrl   String?
-  thumbnailUrl     String?
-  c2paManifestUrl  String?
-  c2paEnabled      Boolean  @default(true)
-  signature        String   @db.Text
-  certificateUrl         String?
-  evidenceCertificateUrl String?
-  metadataJson           String?  @db.Text
-  proofChain             String?  @db.Text
-  tsaToken               Bytes?
-  tsaUrl                 String?
-  tsaTimestamp           DateTime?
-  tsaVerifyStatus          String?
-  tsaChainJson             String?   @db.Text
-  tsaTier                  String?   @default("development")
-  tsaProviderName          String?
-  creatorAttestationAt     DateTime?
-  creatorAttestationName   String?
+  id                          String         @id
+  passportId                  String
+  originalHash                String
+  stampedHash                 String?
+  pHash                       String?
+  dHash                       String?
+  title                       String
+  description                 String?
+  license                     String
+  category                    String         @default("image")
+  fileType                    String
+  fileName                    String?
+  fileSize                    Int?
+  originalFileUrl             String
+  stampedFileUrl              String?
+  thumbnailUrl                String?
+  signature                   String
+  certificateUrl              String?
+  metadataJson                String?
+  proofChain                  String?
+  aiOptOut                    Boolean        @default(true)
+  monitorEnabled              Boolean        @default(false)
+  createdAt                   DateTime       @default(now())
+  audioFingerprint            String?
+  c2paEnabled                 Boolean        @default(true)
+  c2paManifestUrl             String?
+  creatorAttestationAt        DateTime?
+  creatorAttestationName      String?
+  creatorAttestationPayload   String?
+  creatorAttestationSignature String?
   creatorAttestationStatement String?
-  creatorAttestationPayload   String?  @db.Text
-  creatorAttestationSignature String?  @db.Text
+  creatorDeclarationUrl       String?
+  embedding                   Float[]
+  evidenceCertificateUrl      String?
+  tsaChainJson                String?
+  tsaProviderName             String?
+  tsaTier                     String?        @default("development")
+  tsaTimestamp                DateTime?
+  tsaToken                    Bytes?
+  tsaUrl                      String?
+  tsaVerifyStatus             String?
+  videoFingerprint            String?
   creatorAttestationCity      String?
   creatorAttestationCountry   String?
-  creatorDeclarationUrl       String?
-  tsaStatus                   String?  @default("pending")
-  processing                  Boolean  @default(true)
-  aiOptOut               Boolean  @default(true)
-  monitorEnabled   Boolean  @default(false)
-  createdAt        DateTime @default(now())
-  passport         Passport @relation(fields: [passportId], references: [id])
-  monitors         Monitor[]
-  alerts           MonitorAlert[]
-  takedowns        Takedown[]
-  versions         StampVersion[]
-  stampAnchors     StampAnchor[]
+  tsaStatus                   String?        @default("pending")
+  processing                  Boolean        @default(true)
+  monitors                    Monitor[]
+  alerts                      MonitorAlert[]
+  passport                    Passport       @relation(fields: [passportId], references: [id])
+  stampAnchors                StampAnchor[]
+  versions                    StampVersion[]
+  takedowns                   Takedown[]
 
   @@index([pHash])
   @@index([originalHash])
@@ -127,32 +127,32 @@ model StampVersion {
   version      Int
   label        String
   fileHash     String
-  prevHash     String?
-  chainHash    String?
-  signature    String?  @db.Text
   fileUrl      String
   thumbnailUrl String?
   fileSize     Int?
   note         String?
   createdAt    DateTime @default(now())
+  chainHash    String?
+  prevHash     String?
+  signature    String?
   stamp        Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
 
-  @@index([stampId])
   @@unique([stampId, version])
+  @@index([stampId])
 }
 
 model Monitor {
-  id            String    @id @default(cuid())
+  id            String         @id @default(cuid())
   passportId    String
   stampId       String
-  status        String    @default("active")
-  scanFrequency String    @default("weekly")
-  nextScanAt    DateTime?
+  status        String         @default("active")
   lastScanAt    DateTime?
-  matchCount    Int       @default(0)
-  createdAt     DateTime  @default(now())
-  passport      Passport  @relation(fields: [passportId], references: [id])
-  stamp         Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  matchCount    Int            @default(0)
+  createdAt     DateTime       @default(now())
+  nextScanAt    DateTime?
+  scanFrequency String         @default("weekly")
+  passport      Passport       @relation(fields: [passportId], references: [id])
+  stamp         Stamp          @relation(fields: [stampId], references: [id], onDelete: Cascade)
   alerts        MonitorAlert[]
 
   @@unique([passportId, stampId])
@@ -161,7 +161,7 @@ model Monitor {
 }
 
 model MonitorAlert {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   monitorId     String
   stampId       String
   sourceUrl     String
@@ -169,12 +169,12 @@ model MonitorAlert {
   matchType     String
   confidence    Float
   screenshotUrl String?
-  sourceEngine  String?
+  status        String    @default("new")
+  createdAt     DateTime  @default(now())
   externalId    String?
-  status        String   @default("new")
-  createdAt     DateTime @default(now())
-  monitor       Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
-  stamp         Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  sourceEngine  String?
+  monitor       Monitor   @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  stamp         Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
   takedown      Takedown?
 
   @@index([monitorId])
@@ -184,27 +184,27 @@ model MonitorAlert {
 }
 
 model Takedown {
-  id               String    @id @default(cuid())
+  id               String        @id @default(cuid())
   passportId       String
   stampId          String
-  alertId          String?   @unique
+  alertId          String?       @unique
   platform         String
   infringingUrl    String
-  status           String    @default("draft")
-  dmcaLetter       String?   @db.Text
-  submissionMethod String?
-  externalTicketId String?
-  responseDeadline DateTime?
-  escalatedAt      DateTime?
-  autoSubmitted    Boolean   @default(false)
+  status           String        @default("draft")
+  dmcaLetter       String?
   filedAt          DateTime?
   resolvedAt       DateTime?
   resolution       String?
-  notes            String?   @db.Text
-  createdAt        DateTime  @default(now())
-  passport         Passport  @relation(fields: [passportId], references: [id])
-  stamp            Stamp     @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  notes            String?
+  createdAt        DateTime      @default(now())
+  autoSubmitted    Boolean       @default(false)
+  escalatedAt      DateTime?
+  externalTicketId String?
+  responseDeadline DateTime?
+  submissionMethod String?
   alert            MonitorAlert? @relation(fields: [alertId], references: [id])
+  passport         Passport      @relation(fields: [passportId], references: [id])
+  stamp            Stamp         @relation(fields: [stampId], references: [id], onDelete: Cascade)
 
   @@index([passportId])
   @@index([stampId])
@@ -213,31 +213,31 @@ model Takedown {
 }
 
 model BlockchainAnchor {
-  id               String        @id @default(cuid())
-  chain            String
-  txHash           String
-  merkleRoot       String
-  stampCount       Int           @default(0)
-  anchoredAt       DateTime
-  blockchainStatus String        @default("pending")
-  otsPendingBytes  Bytes?
+  id                String        @id @default(cuid())
+  chain             String
+  txHash            String
+  merkleRoot        String
+  stampCount        Int           @default(0)
+  anchoredAt        DateTime
+  createdAt         DateTime      @default(now())
+  auditHeadHash     String?
+  blockchainStatus  String        @default("pending")
   otsConfirmedBytes Bytes?
-  auditHeadHash    String?
-  createdAt        DateTime      @default(now())
-  stamps           StampAnchor[]
+  otsPendingBytes   Bytes?
+  stamps            StampAnchor[]
 
   @@index([merkleRoot])
 }
 
 model StampAnchor {
-  id          String   @id @default(cuid())
+  id          String           @id @default(cuid())
   stampId     String
   anchorId    String
-  merkleProof String   @db.Text
+  merkleProof String
   leafHash    String
-  createdAt   DateTime @default(now())
-  stamp       Stamp    @relation(fields: [stampId], references: [id], onDelete: Cascade)
+  createdAt   DateTime         @default(now())
   anchor      BlockchainAnchor @relation(fields: [anchorId], references: [id], onDelete: Cascade)
+  stamp       Stamp            @relation(fields: [stampId], references: [id], onDelete: Cascade)
 
   @@unique([stampId, anchorId])
   @@index([stampId])
@@ -248,7 +248,7 @@ model UserNotification {
   userId    String
   type      String
   title     String
-  body      String?  @db.Text
+  body      String?
   link      String?
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
@@ -262,13 +262,13 @@ model UserNotification {
 model WebhookEndpoint {
   id         String            @id @default(cuid())
   passportId String
-  url        String            @db.Text
+  url        String
   secret     String
   label      String?
   enabled    Boolean           @default(true)
   createdAt  DateTime          @default(now())
-  passport   Passport          @relation(fields: [passportId], references: [id], onDelete: Cascade)
   deliveries WebhookDelivery[]
+  passport   Passport          @relation(fields: [passportId], references: [id], onDelete: Cascade)
 
   @@index([passportId])
 }
@@ -277,11 +277,11 @@ model WebhookDelivery {
   id          String          @id @default(cuid())
   endpointId  String
   event       String
-  payloadJson String          @db.Text
+  payloadJson String
   status      String          @default("pending")
   attempts    Int             @default(0)
   nextRetryAt DateTime?
-  lastError   String?         @db.Text
+  lastError   String?
   createdAt   DateTime        @default(now())
   endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
 
@@ -295,9 +295,9 @@ model AuditLog {
   passportId      String?
   stampId         String?
   action          String
-  metadataJson    String?  @db.Text
+  metadataJson    String?
   ipAddress       String?
-  userAgent       String?  @db.Text
+  userAgent       String?
   previousLogHash String?
   entryHash       String
   createdAt       DateTime @default(now())

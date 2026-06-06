@@ -368,7 +368,7 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
   const originalFileUrl = `${baseUrl}/uploads/originals/${stampId}.${originalExt}`;
   let thumbnailUrl = isImage ? originalFileUrl : null;
 
-  let pHash = null, dHash = null, stampedBuffer = null, stampedHash = null;
+  let pHash = null, dHash = null, embedding = null, stampedBuffer = null, stampedHash = null;
   let stampedFileUrl = null;
   let audioFingerprint = null, videoFingerprint = null;
 
@@ -377,6 +377,7 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
       const stegoData = await processStego(file, stampId);
       pHash = stegoData.pHash;
       dHash = stegoData.dHash;
+      embedding = stegoData.embedding;
 
       if (stegoData.stamped_base64) {
         stampedBuffer = Buffer.from(stegoData.stamped_base64, 'base64');
@@ -480,6 +481,7 @@ async function stampFile(file, passportRecord, privateKey, title, description, l
           stampedHash,
           pHash,
           dHash,
+          embedding,
           audioFingerprint,
           videoFingerprint,
           title,
